@@ -51,7 +51,7 @@ Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
 [Manjaro](https://manjaro.org) or [Arch Linux](https://archlinux.org) with pacman (or adapt package check for your distro).
 
 Optional: Flatpak and AppImage support if you use those package formats.
----
+
 
 ## Customization
 Update the ignored_folders array in the script to exclude additional folders.
