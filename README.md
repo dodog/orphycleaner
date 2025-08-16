@@ -35,22 +35,18 @@ Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
 ## 📋 Requirements for the Python version
 
 **Python version:**
-- Python 3.10 or newer (tested on Python 3.13)
+- **Python**: 3.9+  
+- **Tkinter** (GUI library)  
 
-**Python standard library modules (already included with Python):**
-- `os`
-- `subprocess`
-- `shutil`
-- `webbrowser`
-- `tkinter` (may require system package installation)
-- `tkinter.font` (comes with Tkinter)
+### Installation of Tkinter
+Depending on your Linux distribution, install `tkinter` with:
 
-**System package dependencies:**
-- `tk` — provides Tkinter support for Python.
+[Manjaro](https://manjaro.org)/[Arch Linux](https://archlinux.org)
+  ```bash
+  sudo pacman -S tk
+   ```
 
-[Manjaro](https://manjaro.org) or [Arch Linux](https://archlinux.org) with pacman (or adapt package check for your distro).
-
-Optional: Flatpak and AppImage support if you use those package formats.
+## Screenshots
 
 
 ## Customization
