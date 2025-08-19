@@ -8,7 +8,7 @@ This app is intended for Manjaro and other Arch-based Linux distributions. Feel 
 
 Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
 
-## Features
+## 🚀 Features
 
 - Simple GUI built with Tkinter (no terminal commands required for usage).
 - Scans common config locations: `~/.config`, `~/.local/share`, and other hidden folders under your home.
@@ -20,7 +20,7 @@ Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
 - Lightweight and fast — no unnecessary dependencies.
 - Runs on Manjaro and other Arch-based distributions.
 
-## Usage
+## 🛠️ Usage
 1. Download the script 
 2. Run it from your home directory:
    ```bash
