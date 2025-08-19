@@ -4,7 +4,7 @@
 # Description: Scans your home directory for orphaned config folders
 #      Author: Jozef Gaal (dodog) 
 #     License: GPL-3+
-#         Web: https://github.com/dodog/orphycleaner-gui
+#         Web: https://github.com/dodog/orphycleaner
 #
 # Scans your home directory for config folders that may belong to uninstalled or unused applications.
 # Matches against installed packages (pacman), Flatpak apps, desktop files, AppImages, and executables.
@@ -581,7 +581,7 @@ class AppGUI(tk.Tk):
 
     def open_help(self):
         # Open the help URL in the default web browser.
-        webbrowser.open("https://github.com/dodog/orphycleaner-gui") 
+        webbrowser.open("https://github.com/dodog/orphycleaner") 
 
     def delete_folder(self):
         # Delete selected orphaned folder and keep selection on next row.
