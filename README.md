@@ -13,8 +13,8 @@ Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
 - Simple GUI built with Tkinter (no terminal commands required for usage).
 - Scans common config locations: `~/.config`, `~/.local/share`, and other hidden folders under your home.
 - Matches folders against installed packages (`pacman`), Flatpak apps, `.desktop` applications, AppImages, and executables in your PATH.
-- Categorizes folders as Installed, Maybe Installed, or Orphaned.
-- Shows a summary count of folders in each category.
+- Categorizes folders as Installed, Maybe Installed, or Orphaned and shows summary count.
+- Option to mark orphaned folder as important (KEEP)
 - Includes default ignored folders like cache, trash, and other system-related directories.
 - Customizable alias mappings for special folder names.
 - Lightweight and fast — no unnecessary dependencies.
