@@ -1,8 +1,8 @@
-# OrphyCleaner GUI - Orphaned Config Folder Cleaner
+# OrphyCleaner GUI
 
 ## Overview
 
-OrphyCleaner GUI is a small desktop utility that scans your home directory for configuration folders that may be "orphaned" — meaning they belong to applications that are no longer installed or in use. It helps you identify and clean up these leftover folders to keep your system tidy. 
+OrphyCleaner GUI is orphaned config folder cleanery that scans your home directory for configuration folders that may be "orphaned" — they belong to applications that are no longer installed. It helps you identify and clean up these leftover folders to keep your system tidy. 
 
 This app is intended for Manjaro and other Arch-based Linux distributions. Feel free to modify it for your Linux distribution. 
 
