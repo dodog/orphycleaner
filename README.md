@@ -47,6 +47,8 @@ Depending on your Linux distribution, install `tkinter` with:
 ## Screenshots
 <img width="1000" height="618" alt="orphycleaner_screenshot" src="https://github.com/user-attachments/assets/4304a7ff-3eb7-464a-88b9-7f2230970727" />
 
+## Help
+For help visit wiki [OrphyCleaner – Help & Documentation](https://github.com/dodog/orphycleaner/wiki)
 
 ## Customization
 Update the ignored_folders array in the script to exclude additional folders.
