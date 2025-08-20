@@ -45,7 +45,8 @@ Depending on your Linux distribution, install `tkinter` with:
    ```
 
 ## Screenshots
-<img width="1000" height="618" alt="orphycleaner_screenshot" src="https://github.com/user-attachments/assets/4304a7ff-3eb7-464a-88b9-7f2230970727" />
+<img width="1500" height="868" alt="orphycleaner-v1 1 0_screnshot" src="https://github.com/user-attachments/assets/0a8a3307-87c9-44a9-835e-76a3772a34ae" />
+
 
 ## Help
 For help visit wiki [OrphyCleaner – Help & Documentation](https://github.com/dodog/orphycleaner/wiki)
