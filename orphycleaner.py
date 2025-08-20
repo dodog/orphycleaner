@@ -2,7 +2,7 @@
 ##
 #     Project: OrphyCleaner GUI- Orphaned Config Folder Cleaner
 # Description: Scans your home directory for orphaned config folders
-#      Author: Jozef Gaal (dodog) 
+#      Author: Jozef Gaal (dodog)
 #     License: GPL-3+
 #         Web: https://github.com/dodog/orphycleaner
 #
@@ -30,6 +30,16 @@
 ##
 import sys
 import platform
+import os
+import subprocess
+import shutil
+import json
+import re
+import time
+import webbrowser
+import threading
+import tkinter as tk
+from tkinter import ttk, messagebox, font
 
 # -------------------------------
 # Basic environment checks
@@ -55,17 +65,14 @@ except (ModuleNotFoundError, ImportError):
     print("    sudo pacman -S tk")
     sys.exit(1)
 
-import os
-import subprocess
-import shutil
-import webbrowser
-import tkinter as tk
-from tkinter import ttk, messagebox, font
-
 # =========================================================
 # CONFIGURATION
 # =========================================================
 HOME = os.path.expanduser("~")
+
+# Cache and kept file locations 
+CACHE_FILE = os.path.join(HOME, ".cache", "orphycleaner", "orphycleaner_pkg_cache.json")
+KEPT_FILE  = os.path.join(HOME, ".local", "share", "orphycleaner", "kept_folders.txt")
 
 # Folders that should never be scanned/marked as orphaned
 IGNORED_FOLDERS = [
@@ -74,6 +81,7 @@ IGNORED_FOLDERS = [
     f"{HOME}/.local/share/keyrings",
     f"{HOME}/.local/share/sounds",
     f"{HOME}/.local/share/Trash",
+    f"{HOME}/.local/share/orphycleaner",
     f"{HOME}/.cache",
     f"{HOME}/.mozilla/cache",
     f"{HOME}/.thumbnails",
@@ -151,8 +159,8 @@ def get_installed_commands():
             cmds.update(os.listdir(path))
     return cmds
 
+# Get list of .desktop app names from /usr/share/applications.
 def get_desktop_apps():
-    # Get list of .desktop app names from /usr/share/applications.
     apps = set()
     desktop_dir = "/usr/share/applications"
     if os.path.isdir(desktop_dir):
@@ -161,56 +169,97 @@ def get_desktop_apps():
                 apps.add(normalize(os.path.splitext(f)[0]))
     return apps
 
+# If you have an AUR helper like yay or paru
+def get_aur_packages():
+    try:
+        result = subprocess.run(["yay", "-Qq"], stdout=subprocess.PIPE, text=True, check=True)
+        return {normalize(pkg) for pkg in result.stdout.splitlines()}
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return set()
+
 # =========================================================
 # MAIN APPLICATION CLASS
 # =========================================================
 class AppGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OrphyCleaner v1.0")
-        self.geometry("1100x650")
+        self.title("OrphyCleaner v1.1")
+        self.geometry("1500x830")
 
+        # Ensure directories exist
+        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+        os.makedirs(os.path.dirname(KEPT_FILE), exist_ok=True)
+
+        # -----------------------------
+        # Thread/cache-related attributes
+        # -----------------------------
+        # Package description cache file
+        self.cache_file = CACHE_FILE
+        try:
+            if os.path.exists(self.cache_file) and os.path.getsize(self.cache_file) > 0:
+                with open(self.cache_file, "r") as f:
+                    self.pkg_descriptions = json.load(f)
+            else:
+                self.pkg_descriptions = {}
+        except Exception:
+            # corrupted/empty file fallback
+            self.pkg_descriptions = {}
+
+        # AUR backoff helpers
+        self.aur_last_query = {}        # pkg_name -> last query timestamp
+        self.aur_backoff_base = 10      # base backoff in seconds
+        self.aur_backoff_max = 300      # max backoff (5 min)
+
+        # -----------------------------
         # Scanning state
+        # -----------------------------
         self.results = {cat: [] for cat in CATEGORY_COLORS.keys()}
         self.current_category = None
         self.scanning_index = 0
-        self.kept_file = os.path.join(HOME, ".config", "kept_folders.txt")
+        self.kept_file = KEPT_FILE
 
-        #Treeview style (font + row height)
+        # -----------------------------
+        # Treeview style (font + row height)
+        # -----------------------------
         self.style = ttk.Style(self)
-        # Use a theme that respects rowheight (clam is widely available on Linux)
+        # Use a theme that respects rowheight (clam)
         try:
             self.style.theme_use("clam")
         except tk.TclError:
             pass
-
+        
         # Change the font you like
-        self.tree_font = font.Font(family="Helvetica", size=12)  # tweak size to taste
-        row_h = self.tree_font.metrics("linespace") + 8          # extra pixels for descenders
-
+        self.tree_font = font.Font(family="Helvetica", size=12)
+        row_h = self.tree_font.metrics("linespace") + 8
+        
         # Two styles: one for the main folder tree, one for the progress tree
         self.style.configure("Folders.Treeview",  font=self.tree_font, rowheight=row_h)
         self.style.configure("Progress.Treeview", font=self.tree_font, rowheight=row_h - 2)
-
+        
         # Selection colors
         self.style.map("Folders.Treeview",
-                    background=[("selected", "#FFEB3B")],
-                    foreground=[("selected", "black")])
+                       background=[("selected", "#FFEB3B")],
+                       foreground=[("selected", "black")])
         self.style.map("Progress.Treeview",
-                    background=[("selected", "#FFC107")],
-                    foreground=[("selected", "black")])
+                       background=[("selected", "#FFC107")],
+                       foreground=[("selected", "black")])
 
+        # -----------------------------
         # Build UI
+        # -----------------------------
         self.create_progress_area()
         self.create_warning_label()
         self.create_main_layout()
 
+        # -----------------------------
         # Prepare data for scanning
+        # -----------------------------
         self.folders_to_scan = self.prepare_folders()
-        self.installed_pkgs = get_installed_packages()
+        self.installed_pkgs = get_installed_packages()  # Pacman
+        self.installed_aur = get_aur_packages()         # AUR
+        self.installed_flatpaks = get_flatpaks()        # Flatpak
         self.installed_cmds = get_installed_commands()
         self.desktop_apps = get_desktop_apps()
-        self.installed_flatpaks = get_flatpaks()
         self.appimages = get_appimages()
 
         # Load kept folders from file
@@ -268,21 +317,26 @@ class AppGUI(tk.Tk):
         scrollbar.pack(side="right", fill="y")
         self.folder_tree.configure(yscrollcommand=scrollbar.set)
 
+        # Right column
+        self.right_frame = ttk.Frame(main_frame)
+        self.right_frame.pack(side="right", fill="y", padx=5, pady=5)
+
         # Right column: Action buttons
         self.create_action_buttons(main_frame)
-
+    
+    #Right column buttons for keeping, opening, deleting folders.
     def create_action_buttons(self, parent):
-        #Right column buttons for keeping, opening, deleting folders.
-        right_frame = ttk.Frame(parent, width=150)
-        right_frame.pack(side="right", fill="y", padx=5)
-        right_frame.pack_propagate(False)
+        self.right_frame = ttk.Frame(parent, width=250)
+        self.right_frame.pack(side="right", fill="y", padx=5)
+        self.right_frame.pack_propagate(False)
+        self.right_frame.grid_propagate(False)   # Prevent grid from resizing
 
         # Configure column to stretch buttons full width
-        right_frame.columnconfigure(0, weight=1)
+        self.right_frame.columnconfigure(0, weight=1)
 
         # KEEP / UNKEEP buttons share the same grid position
-        self.keep_button = tk.Button(right_frame, text="KEEP", bg="#4CAF50", fg="white", command=self.keep_folder)
-        self.unkeep_button = tk.Button(right_frame, text="UNKEEP", bg="#2196F3", fg="white", command=self.unkeep_folder)
+        self.keep_button = tk.Button(self.right_frame, text="KEEP", bg="#4CAF50", fg="white", command=self.keep_folder)
+        self.unkeep_button = tk.Button(self.right_frame, text="UNKEEP", bg="#2196F3", fg="white", command=self.unkeep_folder)
 
         self.keep_button.grid(row=0, column=0, sticky="ew", pady=2)
         self.unkeep_button.grid(row=0, column=0, sticky="ew", pady=2)
@@ -290,22 +344,30 @@ class AppGUI(tk.Tk):
         # Initially show KEEP
         self.keep_button.lift()
 
+        # Load descriptions button
+        self.load_desc_button = tk.Button(self.right_frame, text="LOAD DESCRIPTION", command=self.load_description, bg="#7616DF", fg="white")
+        self.load_desc_button.grid(row=1, column=0, sticky="ew", pady=5)
+
         # Open folder
-        self.open_button = tk.Button(right_frame, text="OPEN FOLDER", bg="#FF9800", fg="white", command=self.open_folder)
-        self.open_button.grid(row=1, column=0, sticky="ew", pady=5)
+        self.open_button = tk.Button(self.right_frame, text="OPEN FOLDER", bg="#FF9800", fg="white", command=self.open_folder)
+        self.open_button.grid(row=2, column=0, sticky="ew", pady=5)
 
         # Delete folder    
-        self.delete_button = tk.Button(right_frame, text="DELETE", bg="#F44336", fg="white", command=self.delete_folder)
-        self.delete_button.grid(row=2, column=0, sticky="ew", pady=5)
+        self.delete_button = tk.Button(self.right_frame, text="DELETE", bg="#F44336", fg="white", command=self.delete_folder)
+        self.delete_button.grid(row=3, column=0, sticky="ew", pady=5)
         # start disabled until a category is shown
         self.delete_button.config(state="disabled", bg="#cccccc", fg="#666666")
 
         # Help button
-        self.help_button = tk.Button(right_frame, text="HELP", command=self.open_help)
-        self.help_button.grid(row=3, column=0, sticky="ew", pady=5)
+        self.help_button = tk.Button(self.right_frame, text="HELP", command=self.open_help)
+        self.help_button.grid(row=4, column=0, sticky="ew", pady=5)
 
         # Quit button
-        tk.Button(right_frame, text="QUIT", command=self.destroy).grid(row=4, column=0, sticky="ew", pady=5)
+        tk.Button(self.right_frame, text="QUIT", command=self.destroy).grid(row=5, column=0, sticky="ew", pady=5)
+        
+        # Description displayed under the buttons
+        self.desc_label = tk.Label(self.right_frame, text="", wraplength=250, justify="left", fg="#333")
+        self.desc_label.grid(row=6, column=0, sticky="w", pady=5)
 
     # =========================================================
     # SCANNING LOGIC
@@ -516,7 +578,339 @@ class AppGUI(tk.Tk):
         self.folder_tree.selection_remove(self.folder_tree.selection())
         self.folder_tree.selection_add(target_item)
         self.folder_tree.see(target_item)
-      
+
+    # =========================================================
+    # DESCRIPTION HANDLER
+    # =========================================================
+    #Run a command and return stdout text or None. Suppress stderr.
+    def _run_cmd(self, cmd, timeout=5):
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=timeout
+            )
+            return result.stdout.strip()
+        except subprocess.TimeoutExpired:
+            return ""
+        except Exception:
+            return ""
+    
+    #Parse Description from pacman/yay/paru -Qi/-Si (handles locales like 'Description' or 'Popis')."""
+    def _parse_desc_from_qi_or_si(self, text):
+        if not text:
+            return None
+        for line in text.splitlines():
+            if ":" in line:
+                label, val = line.split(":", 1)
+                lab = label.strip().lower()
+                if "description" in lab or "popis" in lab:  # add more locales if needed
+                    return val.strip()
+        return None
+
+    # Parse description from *-Ss output (pacman/yay/paru). 
+    # Looks for header lines containing '/<wanted_name>' and returns the following indented description line.
+    def _parse_desc_from_ss(self, text, wanted_name):
+        if not text:
+            return None
+
+        lines = text.splitlines()
+        wanted_name = wanted_name.strip().lower()
+
+        for i, line in enumerate(lines):
+            line = line.strip("\n")
+            # skip noise lines
+            if not line or line.startswith("==>") or "matches found" in line.lower():
+                continue
+
+            # detect header lines like 'aur/gnokii 0.6.31-15 ...'
+            if re.search(r"/" + re.escape(wanted_name) + r"\b", line.lower()):
+                # next indented line should be description
+                if i + 1 < len(lines):
+                    nxt = lines[i + 1]
+                    if nxt.startswith("    ") or nxt.startswith("\t"):
+                        return nxt.strip()
+
+        # fallback: first indented non-noise line
+        for line in lines:
+            if line.startswith("    ") or line.startswith("\t"):
+                val = line.strip()
+                if val and "matches found" not in val.lower():
+                    return val
+
+        return None
+
+    # -----------------------------
+    # PACMAN SEARCH
+    # -----------------------------
+    def _search_pacman(self, name):
+        """Try pacman for installed (-Qi), repo (-Si), then search (-Ss)."""
+        # 1) Installed (fast, local)
+        out = self._run_cmd(["pacman", "-Qi", name], timeout=2)
+        desc = self._parse_desc_from_qi_or_si(out)
+        if desc:
+            return desc
+
+        # 2) Repo info (might be slower)
+        out = self._run_cmd(["pacman", "-Si", name], timeout=8)
+        desc = self._parse_desc_from_qi_or_si(out)
+        if desc:
+            return desc
+
+        # 3) Search databases
+        out = self._run_cmd(["pacman", "-Ss", f"^{name}$"], timeout=8)
+        desc = self._parse_desc_from_ss(out, name)
+        if desc:
+            return desc
+
+        return None
+
+    # -----------------------------
+    # AUR SEARCH (via yay/paru) with negative caching & backoff
+    # -----------------------------
+    def _search_aur(self, pkg_name):
+        cache_key = f"aur:{pkg_name}"
+        # check negative cache
+        if cache_key in self.pkg_descriptions:
+            if self.pkg_descriptions[cache_key] == "<not found>":
+                return None
+            return self.pkg_descriptions[cache_key]
+
+        # pick the first available helper
+        if shutil.which("yay"):
+            helper = "yay"
+        elif shutil.which("paru"):
+            helper = "paru"
+        else:
+            self.pkg_descriptions[cache_key] = "<not found>"
+            return None
+
+        # backoff parameters
+        retries = 2
+        delay = 1
+
+        attempt = 0
+        while attempt < retries:
+            attempt += 1
+            try:
+                result = subprocess.run(
+                    [helper, "-Si", pkg_name],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=6
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    desc = self._parse_desc_from_qi_or_si(result.stdout)
+                    if desc:
+                        self.pkg_descriptions[cache_key] = desc
+                        return desc
+                    break  # found nothing, no need to retry
+                else:
+                    # network or other error, backoff
+                    time.sleep(delay)
+                    delay *= 2
+            except subprocess.TimeoutExpired:
+                time.sleep(delay)
+                delay *= 2
+            except Exception:
+                break
+
+        # negative cache
+        self.pkg_descriptions[cache_key] = "<not found>"
+        return None
+
+    # -----------------------------
+    # FLATPAK SEARCH
+    # -----------------------------
+    def _flatpak_installed_ids(self):
+        """Return set of installed flatpak app IDs (raw)."""
+        out = self._run_cmd(["flatpak", "list", "--app", "--columns=application"])
+        if not out:
+            return set()
+        return {x.strip() for x in out.splitlines() if x.strip()}
+
+    # -----------------------------
+    # FLATPAK SEARCH with negative caching
+    # -----------------------------
+    def _search_flatpak(self, name):
+        cache_key = f"flatpak:{name}"
+        if cache_key in self.pkg_descriptions:
+            if self.pkg_descriptions[cache_key] == "<not found>":
+                return None
+            return self.pkg_descriptions[cache_key]
+
+        if not shutil.which("flatpak"):
+            self.pkg_descriptions[cache_key] = "<not found>"
+            return None
+
+        target = name.lower()
+        installed_ids = self._flatpak_installed_ids()
+        for appid in installed_ids:
+            appid_l = appid.lower()
+            last = appid_l.split(".")[-1]
+            if appid_l == target or last == target:
+                out = self._run_cmd(["flatpak", "info", appid], timeout=3)
+                desc = self._parse_desc_from_qi_or_si(out)
+                if desc:
+                    self.pkg_descriptions[cache_key] = desc
+                    return desc
+                break
+
+        out = self._run_cmd(["flatpak", "search", "--columns=name,application,description", name], timeout=5)
+        if out:
+            for line in out.splitlines():
+                line = line.strip()
+                if not line or ("Name" in line and "Application ID" in line):
+                    continue
+                cols = [c.strip() for c in line.split("\t")]
+                if len(cols) < 2:
+                    continue
+                nm, appid = cols[0], cols[1]
+                desc = cols[2] if len(cols) > 2 else ""
+                nm_l = nm.lower()
+                app_last = appid.lower().split(".")[-1] if appid else ""
+                if nm_l == target or app_last == target or (appid and appid.lower() == target):
+                    self.pkg_descriptions[cache_key] = desc or nm
+                    return desc or nm
+            # fallback substring match
+            for line in out.splitlines():
+                cols = [c.strip() for c in line.split("\t")]
+                if len(cols) >= 2:
+                    nm, appid = cols[0].lower(), cols[1].lower()
+                    if target in nm or target in appid:
+                        self.pkg_descriptions[cache_key] = cols[2] if len(cols) > 2 else cols[0]
+                        return self.pkg_descriptions[cache_key]
+
+        # negative cache
+        self.pkg_descriptions[cache_key] = "<not found>"
+        return None
+
+    # -----------------------------
+    # Build a small, sane set of candidates from a folder path:
+    # - basename
+    # - child after .config or .local/share
+    # - strip leading dot
+    # - alias map (raw basename)
+    # - normalize: lowercase + spaces → dashes  (underscores kept!)
+    # -----------------------------
+    def _derive_name_candidates(self, folder_path):
+
+        rel = os.path.relpath(folder_path, HOME) if folder_path.startswith(HOME) else folder_path
+        parts = [p for p in rel.split(os.sep) if p]
+
+        base = os.path.basename(folder_path)
+        cand = set()
+
+        # child after .config or .local/share
+        for i, p in enumerate(parts):
+            if p == ".config" and i + 1 < len(parts):
+                cand.add(parts[i+1])
+            if p == ".local" and i + 2 < len(parts) and parts[i+1] == "share":
+                cand.add(parts[i+2])
+
+        # always include basename
+        cand.add(base)
+
+        # strip leading dot
+        if base.startswith("."):
+            cand.add(base.lstrip("."))
+
+        # alias mapping (raw basename key)
+        if base in ALIAS_MAP:
+            cand.add(ALIAS_MAP[base])
+
+        # normalize: lowercase + spaces→dashes (keep underscores!)
+        norm = set()
+        for c in cand:
+            n = c.strip().lower().replace(" ", "-")
+            if len(n) >= 2:
+                norm.add(n)
+
+        # stable order (shorter first tends to be more “package-like”)
+        return sorted(norm, key=len)
+
+    # -----------------------------
+    # Load description for selected folder
+    # -----------------------------
+    def load_description(self):
+        """Kick off background description lookup for the selected folder."""
+        threading.Thread(target=self._load_description_thread, daemon=True).start()
+
+    def _update_label(self, text):
+        """Thread-safe label update."""
+        self.desc_label.after(0, lambda: self.desc_label.config(text=text))
+
+    def _load_description_thread(self):
+        # get selection
+        sel = self.folder_tree.selection()
+        if not sel:
+            self._update_label("Select a folder first")
+            return
+
+        item = self.folder_tree.item(sel[0])
+        folder_path = item.get("text") or (item.get("values")[0] if item.get("values") else "")
+        if not folder_path:
+            self._update_label("Could not read selected folder")
+            return
+
+        self._update_label("Loading description...")
+
+        # candidates (conservative)
+        candidates = self._derive_name_candidates(folder_path)
+
+        best_desc = None
+        best_name = None
+        best_source = "any"
+
+        for cand in candidates:
+            # Try each source in order: pacman → AUR → flatpak
+            for source, search_func in [
+                ("pacman", self._search_pacman),
+                ("aur", self._search_aur),
+                ("flatpak", self._search_flatpak)
+            ]:
+                cache_key = f"{source}:{cand}"
+                cached = self.pkg_descriptions.get(cache_key)
+
+                if cached and cached != "<not found>":
+                    best_desc, best_name, best_source = cached, cand, source
+                    break  # got a positive cached result
+
+                # Not cached or cached miss → search
+                self._update_label(f"Searching {source.upper()} for {cand}...")
+                desc = search_func(cand)
+
+                if desc:
+                    best_desc, best_name, best_source = desc, cand, source
+                    self.pkg_descriptions[cache_key] = desc  # cache positive result
+                    break
+                else:
+                    # cache negative result for backoff purposes
+                    self.pkg_descriptions[cache_key] = "<not found>"
+
+            if best_desc:
+                break  # stop after first positive result
+
+        if not best_desc:
+            best_name = candidates[0] if candidates else "(unknown)"
+            best_desc = "Description not found"
+            best_source = "any"
+            # Cache negative results for "any" key
+            cache_key = f"{best_source}:{best_name}"
+            self.pkg_descriptions[cache_key] = best_desc
+
+        # save cache to disk
+        try:
+            with open(self.cache_file, "w") as f:
+                json.dump(self.pkg_descriptions, f, indent=2)
+        except Exception:
+            pass
+
+        self._update_label(f"{best_name}: {best_desc}")
+
     # =========================================================
     # ACTION HANDLERS
     # =========================================================
@@ -529,7 +923,7 @@ class AppGUI(tk.Tk):
                     if os.path.isdir(path):
                         self.results["Kept"].append(path)
 
-    # Move selected folder from and  to category.
+    # Move selected folder from and to category.
     def move_folder_between_categories(self, src_category, dst_category):
         # Move selected folder from src_category to dst_category and keep selection.
         if self.current_category != src_category:
@@ -564,9 +958,9 @@ class AppGUI(tk.Tk):
         self.move_folder_between_categories("Kept", "Orphaned")
         self.save_kept_folders()
         self.create_category_buttons()
-
+    
+    # Write kept folders to file.
     def save_kept_folders(self):
-        # Write kept folders to file.
         with open(self.kept_file, "w") as f:
             for fpath in self.results["Kept"]:
                 f.write(fpath + "\n")
