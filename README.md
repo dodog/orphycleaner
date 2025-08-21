@@ -2,9 +2,9 @@
 
 ## Overview
 
-OrphyCleaner is a tool that scans your Linux system for orphaned or unused application folders and helps you decide whether to keep or remove them to keep your system tidy. It provides descriptions of applications using multiple sources (Pacman, AUR, Flatpak) to make it easier to identify what a folder belongs to. 
+OrphyCleaner is a lightweight GUI tool for Arch-based Linux that scans your home directory for orphaned or unused application folders and helps you decide whether to keep or remove them.
 
-This app is intended for Manjaro and other Arch-based Linux distributions. Feel free to modify it for your Linux distribution. 
+Feel free to modify it for your Linux distribution. 
 
 Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
 
