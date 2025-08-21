@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+__version__ = "1.1.1"
 ##
 #     Project: OrphyCleaner GUI- Orphaned Config Folder Cleaner
 # Description: Scans your home directory for orphaned config folders
@@ -183,7 +184,7 @@ def get_aur_packages():
 class AppGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OrphyCleaner v1.1")
+        self.title(f"OrphyCleaner v{__version__}")
         self.geometry("1500x830")
 
         # Ensure directories exist
