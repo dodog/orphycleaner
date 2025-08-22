@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 ##
 #     Project: OrphyCleaner GUI- Orphaned Config Folder Cleaner
 # Description: Scans your home directory for orphaned config folders
