@@ -1,8 +1,10 @@
 [Desktop Entry]
 Name=OrphyCleaner
-Comment=Cleans configuration file leftovers after uninstalling applications in the user's home folder
-Exec=/usr/bin/orphycleaner
+Comment=Scan your home directory for orphaned or unused application folders
+Exec=orphycleaner
 Icon=orphycleaner
 Terminal=false
 Type=Application
-Categories=Utility;
+Categories=Utility;System;
+StartupNotify=true
+StartupWMClass=Tk                
