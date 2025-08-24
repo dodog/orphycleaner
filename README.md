@@ -3,8 +3,7 @@
 ## Overview
 <img width="64" height="64" alt="64x64" src="https://github.com/user-attachments/assets/ab88f709-2ab5-446d-8219-2f50f1920540" align="left" style="margin-right:15px"/>
 
-OrphyCleaner is a lightweight GUI tool for Arch-based Linux that scans your home directory for orphaned or unused application folders and helps you decide whether to keep or remove them. Feel free to modify it for your Linux distribution. 
-
+OrphyCleaner is a lightweight GUI tool for Arch-based Linux that scans your home directory for orphaned or unused application folders and helps you decide whether to keep or remove them. Feel free to modify it for your Linux distribution. <br /> <br />
 
 Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
 
@@ -14,17 +13,22 @@ Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
 - Scans common config locations: `~/.config`, `~/.local/share`, and other hidden folders under your home.
 - Matches folders against installed packages (`pacman`), Flatpak apps, `.desktop` applications, AppImages, and executables in your PATH.
 - Categorizes folders as Installed, Maybe Installed, or Orphaned and shows summary count.
-- Option to mark orphaned folder as important (KEEP)
+- Option to mark orphaneds folder as important (KEEP)
 - Includes default ignored folders like cache, trash, and other system-related directories.
 - Customizable alias mappings for special folder names.
 - Lightweight and fast — no unnecessary dependencies.
 - Runs on Manjaro and other Arch-based distributions.
 
-## 🛠️ Usage
-1. Download the script 
-2. Run it from your home directory:
+## 🛠️ Installation
+From Github
    ```bash
-   python orphycleaner.py
+   git clone https://github.com/dodog/orphycleaner.git
+   cd orphycleaner
+   python3 orphycleaner.py
+   ```
+From AUR (Recommended for Manjaro/Arch)
+   ```bash
+   yay -S orphycleaner
    ```
 
 > [!WARNING]
@@ -32,17 +36,17 @@ Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
 
 ## 📋 Requirements for the Python version
 
-**Python version:**
-- **Python**: 3.9+  
-- **Tkinter** (GUI library)  
-
-### Installation of Tkinter
-Depending on your Linux distribution, install `tkinter` with:
-
-[Manjaro](https://manjaro.org)/[Arch Linux](https://archlinux.org)
-  ```bash
-  sudo pacman -S tk
-   ```
+   **Python version:**
+   - **Python**: 3.9+  
+   - **Tkinter** (GUI library)  
+   
+   ### Installation of Tkinter
+   Depending on your Linux distribution, install `tkinter` with:
+   
+   [Manjaro](https://manjaro.org)/[Arch Linux](https://archlinux.org)
+     ```bash
+     sudo pacman -S tk
+      ```
 
 ## Screenshots
 <img width="1500" height="868" alt="orphycleaner-v1 1 0_screnshot" src="https://github.com/user-attachments/assets/0a8a3307-87c9-44a9-835e-76a3772a34ae" />
