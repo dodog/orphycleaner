@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 ##
 #     Project: OrphyCleaner GUI- Orphaned Config Folder Cleaner
 # Description: Scans your home directory for orphaned config folders
 #      Author: Jozef Gaal (dodog)
-#     License: GPL-3+
+#     License: AGPL-3+
 #         Web: https://github.com/dodog/orphycleaner
 #
 # Scans your home directory for config folders that may belong to uninstalled or unused applications.
@@ -83,13 +83,23 @@ IGNORED_FOLDERS = [
     f"{HOME}/.local/share/sounds",
     f"{HOME}/.local/share/Trash",
     f"{HOME}/.local/share/orphycleaner",
+    f"{HOME}/.local/share/gvfs-metadata",
+    f"{HOME}/.local/share/mime",
+    f"{HOME}/.local/share/fonts",
     f"{HOME}/.cache",
     f"{HOME}/.mozilla/cache",
     f"{HOME}/.thumbnails",
     f"{HOME}/.npm",
+    f"{HOME}/.themes",
+    f"{HOME}/.var/app",
+    f"{HOME}/.pki",
+    f"{HOME}/.fonts",
+    f"{HOME}/.Templates",
+    f"{HOME}/.Public",
     f"{HOME}/.config/pulse",
     f"{HOME}/.config/gtk-4.0",
     f"{HOME}/.config/gtk-3.0",
+    f"{HOME}/.config/gtk-2.0",
     f"{HOME}/.local/share/flatpak/runtime",
     f"{HOME}/.config/autostart"
 ]
@@ -187,6 +197,18 @@ class AppGUI(tk.Tk):
         self.title(f"OrphyCleaner v{__version__}")
         self.geometry("1500x830")
 
+        # Only set icon if installed system-wide (AUR)
+        system_icon_path = "/usr/share/pixmaps/orphycleaner.png"
+        if os.path.exists(system_icon_path):
+            try:
+                # self.iconphoto sets the icon for the window decorations
+                self.iconphoto(True, tk.PhotoImage(file=system_icon_path))
+            except Exception as e:
+                print(f"Warning: could not set taskbar icon: {e}")
+        else:
+            # Running directly from source - no icon 
+            pass
+       
         # Ensure directories exist
         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
         os.makedirs(os.path.dirname(KEPT_FILE), exist_ok=True)
