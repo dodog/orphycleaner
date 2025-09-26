@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 ##
 #     Project: OrphyCleaner GUI- Orphaned Config Folder Cleaner
 # Description: Scans your home directory for orphaned config folders
@@ -41,6 +41,7 @@ import webbrowser
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, font
+os.environ["TK_APP_NAME"] = "OrphyCleaner"
 
 # -------------------------------
 # Basic environment checks
@@ -193,7 +194,7 @@ def get_aur_packages():
 # =========================================================
 class AppGUI(tk.Tk):
     def __init__(self):
-        super().__init__()
+        super().__init__(className="OrphyCleaner")
         self.title(f"OrphyCleaner v{__version__}")
         self.geometry("1500x830")
 
