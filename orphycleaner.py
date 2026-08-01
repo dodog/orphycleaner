@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-__version__ = "1.1.4"
+__version__ = "2.0.0"
 ##
-#     Project: OrphyCleaner GUI- Orphaned Config Folder Cleaner
+#     Project: OrphyCleaner GUI - Orphaned Config Folder Cleaner
 # Description: Scans your home directory for orphaned config folders
 #      Author: Jozef Gaal (dodog)
 #     License: AGPL-3+
@@ -11,7 +11,8 @@ __version__ = "1.1.4"
 # Matches against installed packages (pacman), Flatpak apps, desktop files, AppImages, and executables.
 # Categorizes folders as Installed, Maybe Installed, or Orphaned.
 #
-# WARNING: Not 100% guaranteed — backup and verify before deleting folders.
+# WARNING: Not 100% guaranteed - backup and verify before deleting folders.
+#
 #
 # Usage:
 #   python orphycleaner.py
@@ -37,48 +38,47 @@ import shutil
 import json
 import re
 import time
-import webbrowser
 import threading
-import tkinter as tk
-from tkinter import ttk, messagebox, font
-os.environ["TK_APP_NAME"] = "OrphyCleaner"
 
 # -------------------------------
 # Basic environment checks
 # -------------------------------
 
-# Check Python version
 if sys.version_info < (3, 9):
     print("Error: OrphyCleaner requires Python 3.9 or newer.")
     sys.exit(1)
 
-# Check OS (intended for Arch/Manjaro)
 if "Linux" not in platform.system():
     print("Warning: This application was designed for Linux (Manjaro/Arch).")
     print("It may not work correctly on your system.\n")
 
-# Check if tkinter is available
 try:
-    import tkinter as tk
-    from tkinter import ttk, messagebox, font
-except (ModuleNotFoundError, ImportError):
-    print("Error: The Tkinter library is not installed or configured on your system.")
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Adw", "1")
+    from gi.repository import Gtk, Adw, GLib, Gio, GObject, Gdk
+except (ModuleNotFoundError, ImportError, ValueError):
+    print("Error: GTK4 / libadwaita (PyGObject) is not installed or configured on your system.")
     print("On Manjaro/Arch, install it with:")
-    print("    sudo pacman -S tk")
+    print("    sudo pacman -S python-gobject gtk4 libadwaita")
     sys.exit(1)
 
 # =========================================================
 # CONFIGURATION
 # =========================================================
 HOME = os.path.expanduser("~")
+APP_ID = "sk.mayday.OrphyCleaner"
 
-# Cache and kept file locations 
-CACHE_FILE = os.path.join(HOME, ".cache", "orphycleaner", "orphycleaner_pkg_cache.json")
-KEPT_FILE  = os.path.join(HOME, ".local", "share", "orphycleaner", "kept_folders.txt")
+CACHE_FILE    = os.path.join(HOME, ".cache", "orphycleaner", "orphycleaner_pkg_cache.json")
+KEPT_FILE     = os.path.join(HOME, ".local", "share", "orphycleaner", "kept_folders.txt")
+SETTINGS_FILE = os.path.join(HOME, ".local", "share", "orphycleaner", "settings.json")
 
-# Folders that should never be scanned/marked as orphaned
+SUBPROCESS_ENV = os.environ.copy()
+SUBPROCESS_ENV["LANG"] = "C"
+SUBPROCESS_ENV["LC_ALL"] = "C"
+
 IGNORED_FOLDERS = [
-    f"{HOME}/.local/share/applications", 
+    f"{HOME}/.local/share/applications",
     f"{HOME}/.local/share/backgrounds",
     f"{HOME}/.local/share/keyrings",
     f"{HOME}/.local/share/sounds",
@@ -102,59 +102,108 @@ IGNORED_FOLDERS = [
     f"{HOME}/.config/gtk-3.0",
     f"{HOME}/.config/gtk-2.0",
     f"{HOME}/.local/share/flatpak/runtime",
-    f"{HOME}/.config/autostart"
+    f"{HOME}/.config/autostart",
 ]
 
-# Maps folder names to more recognizable app names
 ALIAS_MAP = {
     ".audacity-data": "audacity",
     ".SynologyDrive": "synology-drive",
     "Code - OSS": "code-oss",
     ".eID_klient": "eidklient",
-    ".mozilla": "mozilla"
+    ".mozilla": "mozilla",
 }
 
-# Category labels with their display colors
-CATEGORY_COLORS = {
-    "Installed (package match)": "#4CAF50",      # green
-    "Installed (executable found)": "#4CAF50",   # green
-    "Installed (Flatpak)": "#4CAF50",            # green
-    "Installed (desktop file match)": "#4CAF50", # green
-    "Installed (AppImage)": "#4CAF50",           # green
-    "Maybe Installed (partial package match)": "#FF9800", # orange
-    "Orphaned": "#F44336",                       # red
-    "Kept": "#2196F3"                            # blue
+# Category labels mapped to GTK4/libadwaita's built-in semantic CSS
+# classes instead of hardcoded hex colors. These automatically switch
+# with the system light/dark theme (Adwaita / Adwaita-dark).
+CATEGORY_STYLES = {
+    "Installed (package match)": "success",
+    "Installed (executable found)": "success",
+    "Installed (Flatpak)": "success",
+    "Installed (desktop file match)": "success",
+    "Installed (AppImage)": "success",
+    "Maybe Installed (partial package match)": "warning",
+    "Orphaned": "error",
+    "Kept": "accent",
 }
+CATEGORY_ICONS = {
+    "Installed (package match)": "package-x-generic-symbolic",
+    "Installed (executable found)": "system-run-symbolic",
+    "Installed (Flatpak)": "application-x-addon-symbolic",
+    "Installed (desktop file match)": "application-x-executable-symbolic",
+    "Installed (AppImage)": "drive-removable-media-symbolic",
+    "Maybe Installed (partial package match)": "dialog-question-symbolic",
+    "Orphaned": "user-trash-symbolic",
+    "Kept": "starred-symbolic",
+}
+CATEGORY_ORDER = list(CATEGORY_STYLES.keys())
+
 
 # =========================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS (unchanged from the Tkinter version - pure logic,
+# no GUI toolkit dependency)
 # =========================================================
 def normalize(name):
-    # Normalize a name by making lowercase and replacing spaces/punctuation with dashes.
     return name.lower().replace(' ', '-').replace('_', '-').replace('.', '-')
 
+
 def is_ignored(folder):
-    # Check if the folder is in the ignore list or inside an ignored path
     return any(folder == ignored or folder.startswith(ignored + "/") for ignored in IGNORED_FOLDERS)
 
+
 def get_installed_packages():
-    # Get list of installed system packages (Pacman)
     try:
-        result = subprocess.run(["pacman", "-Qq"], stdout=subprocess.PIPE, text=True, check=True)
+        result = subprocess.run(["pacman", "-Qq"], stdout=subprocess.PIPE, text=True, check=True, env=SUBPROCESS_ENV)
         return {normalize(pkg) for pkg in result.stdout.splitlines()}
     except (subprocess.CalledProcessError, FileNotFoundError):
         return set()
 
-def get_flatpaks():
-    # Get list of installed Flatpak apps
+
+_flatpak_raw_cache = None
+
+
+def get_flatpak_ids_raw():
+    global _flatpak_raw_cache
+    if _flatpak_raw_cache is not None:
+        return _flatpak_raw_cache
     try:
-        result = subprocess.run(["flatpak", "list", "--app", "--columns=application"], stdout=subprocess.PIPE, text=True, check=True)
-        return {normalize(app) for app in result.stdout.splitlines()}
+        result = subprocess.run(
+            ["flatpak", "list", "--app", "--columns=application"],
+            stdout=subprocess.PIPE, text=True, check=True, env=SUBPROCESS_ENV
+        )
+        _flatpak_raw_cache = {x.strip() for x in result.stdout.splitlines() if x.strip()}
     except (FileNotFoundError, subprocess.CalledProcessError):
-        return set()
+        _flatpak_raw_cache = set()
+    return _flatpak_raw_cache
+
+
+def get_flatpaks():
+    return {normalize(app) for app in get_flatpak_ids_raw()}
+
+
+def get_folder_size(path):
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(path, onerror=lambda e: None):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            try:
+                if not os.path.islink(fp):
+                    total += os.path.getsize(fp)
+            except OSError:
+                pass
+    return total
+
+
+def format_size(num_bytes):
+    size = float(num_bytes)
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024 or unit == "TB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
 
 def get_appimages():
-    # Get list of AppImage files in ~/Applications
     appimage_dir = os.path.join(HOME, "Applications")
     apps = set()
     if os.path.isdir(appimage_dir):
@@ -163,15 +212,15 @@ def get_appimages():
                 apps.add(normalize(os.path.splitext(f)[0]))
     return apps
 
+
 def get_installed_commands():
-    # Get list of all executable commands in PATH
     cmds = set()
     for path in os.environ.get("PATH", "").split(os.pathsep):
         if os.path.isdir(path):
             cmds.update(os.listdir(path))
     return cmds
 
-# Get list of .desktop app names from /usr/share/applications.
+
 def get_desktop_apps():
     apps = set()
     desktop_dir = "/usr/share/applications"
@@ -181,43 +230,80 @@ def get_desktop_apps():
                 apps.add(normalize(os.path.splitext(f)[0]))
     return apps
 
-# If you have an AUR helper like yay or paru
+
 def get_aur_packages():
     try:
-        result = subprocess.run(["yay", "-Qq"], stdout=subprocess.PIPE, text=True, check=True)
+        result = subprocess.run(["yay", "-Qq"], stdout=subprocess.PIPE, text=True, check=True, env=SUBPROCESS_ENV)
         return {normalize(pkg) for pkg in result.stdout.splitlines()}
     except (FileNotFoundError, subprocess.CalledProcessError):
         return set()
 
-# =========================================================
-# MAIN APPLICATION CLASS
-# =========================================================
-class AppGUI(tk.Tk):
-    def __init__(self):
-        super().__init__(className="OrphyCleaner")
-        self.title(f"OrphyCleaner v{__version__}")
-        self.geometry("1500x830")
 
-        # Only set icon if installed system-wide (AUR)
-        system_icon_path = "/usr/share/pixmaps/orphycleaner.png"
-        if os.path.exists(system_icon_path):
-            try:
-                # self.iconphoto sets the icon for the window decorations
-                self.iconphoto(True, tk.PhotoImage(file=system_icon_path))
-            except Exception as e:
-                print(f"Warning: could not set taskbar icon: {e}")
-        else:
-            # Running directly from source - no icon 
-            pass
-       
-        # Ensure directories exist
+def prepare_folders():
+    folders = []
+    config_path = os.path.join(HOME, ".config")
+    if os.path.isdir(config_path):
+        folders.extend(os.path.join(config_path, f) for f in os.listdir(config_path))
+
+    local_share = os.path.join(HOME, ".local", "share")
+    if os.path.isdir(local_share):
+        folders.extend(os.path.join(local_share, f) for f in os.listdir(local_share))
+
+    for f in os.listdir(HOME):
+        full_path = os.path.join(HOME, f)
+        if f.startswith('.') and os.path.isdir(full_path) and f not in ['.config', '.local']:
+            folders.append(full_path)
+
+    return [f for f in folders if os.path.isdir(f) and not is_ignored(f)]
+
+
+# =========================================================
+# DATA MODEL
+# =========================================================
+class FolderItem(GObject.Object):
+    """Wraps a single folder path plus its lazily-computed size."""
+    __gtype_name__ = "FolderItem"
+
+    def __init__(self, path):
+        super().__init__()
+        self.path = path
+        self.size = None  # None until computed in the background
+
+    @property
+    def size_text(self):
+        return format_size(self.size) if self.size is not None else "calculating\u2026"
+
+
+class FolderRow(Adw.ActionRow):
+    """An Adw.ActionRow that remembers which FolderItem it represents."""
+    def __init__(self, item: FolderItem):
+        super().__init__()
+        self.item = item
+        self.set_title(GLib.markup_escape_text(item.path))
+        self.set_subtitle(item.size_text)
+        self.set_title_lines(1)
+        self.set_subtitle_lines(1)
+
+    def refresh(self):
+        self.set_subtitle(self.item.size_text)
+
+
+# =========================================================
+# MAIN APPLICATION WINDOW
+# =========================================================
+class OrphyCleanerWindow(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="OrphyCleaner")
+
+        self.settings = self._load_settings()
+        w = self.settings.get("width", 1400)
+        h = self.settings.get("height", 830)
+        self.set_default_size(w, h)
+        self.connect("close-request", self._on_close_request)
+
         os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
         os.makedirs(os.path.dirname(KEPT_FILE), exist_ok=True)
 
-        # -----------------------------
-        # Thread/cache-related attributes
-        # -----------------------------
-        # Package description cache file
         self.cache_file = CACHE_FILE
         try:
             if os.path.exists(self.cache_file) and os.path.getsize(self.cache_file) > 0:
@@ -226,403 +312,521 @@ class AppGUI(tk.Tk):
             else:
                 self.pkg_descriptions = {}
         except Exception:
-            # corrupted/empty file fallback
             self.pkg_descriptions = {}
 
-        # AUR backoff helpers
-        self.aur_last_query = {}        # pkg_name -> last query timestamp
-        self.aur_backoff_base = 10      # base backoff in seconds
-        self.aur_backoff_max = 300      # max backoff (5 min)
+        self.aur_last_query = {}
+        self.aur_backoff_base = 10
+        self.aur_backoff_max = 300
 
-        # -----------------------------
-        # Scanning state
-        # -----------------------------
-        self.results = {cat: [] for cat in CATEGORY_COLORS.keys()}
+        self.results = {cat: [] for cat in CATEGORY_STYLES.keys()}
         self.current_category = None
-        self.scanning_index = 0
         self.kept_file = KEPT_FILE
 
-        # -----------------------------
-        # Treeview style (font + row height)
-        # -----------------------------
-        self.style = ttk.Style(self)
-        # Use a theme that respects rowheight (clam)
+        self.folder_items = {}          # path -> FolderItem (shared across categories)
+        self.category_rows = {}         # category -> sidebar Adw.ActionRow
+        self.category_count_labels = {}  # category -> count Gtk.Label
+        self.folder_row_by_path = {}    # path -> FolderRow currently shown in the list
+        self.sizing_in_progress = set()
+        self._switching_category = False
+
+        self._build_actions()
+        self._build_ui()
+
+        self.folders_to_scan = prepare_folders()
+        threading.Thread(target=self._load_system_data_thread, daemon=True).start()
+
+    # =========================================================
+    # SETTINGS
+    # =========================================================
+    def _load_settings(self):
         try:
-            self.style.theme_use("clam")
-        except tk.TclError:
+            if os.path.exists(SETTINGS_FILE):
+                with open(SETTINGS_FILE, "r") as f:
+                    return json.load(f)
+        except Exception:
             pass
-        
-        # Change the font you like
-        self.tree_font = font.Font(family="Helvetica", size=12)
-        row_h = self.tree_font.metrics("linespace") + 8
-        
-        # Two styles: one for the main folder tree, one for the progress tree
-        self.style.configure("Folders.Treeview",  font=self.tree_font, rowheight=row_h)
-        self.style.configure("Progress.Treeview", font=self.tree_font, rowheight=row_h - 2)
-        
-        # Selection colors
-        self.style.map("Folders.Treeview",
-                       background=[("selected", "#FFEB3B")],
-                       foreground=[("selected", "black")])
-        self.style.map("Progress.Treeview",
-                       background=[("selected", "#FFC107")],
-                       foreground=[("selected", "black")])
+        return {}
 
-        # -----------------------------
-        # Build UI
-        # -----------------------------
-        self.create_progress_area()
-        self.create_warning_label()
-        self.create_main_layout()
+    def _save_settings(self):
+        try:
+            os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+            self.settings["width"] = self.get_width()
+            self.settings["height"] = self.get_height()
+            with open(SETTINGS_FILE, "w") as f:
+                json.dump(self.settings, f, indent=2)
+        except Exception:
+            pass
 
-        # -----------------------------
-        # Prepare data for scanning
-        # -----------------------------
-        self.folders_to_scan = self.prepare_folders()
-        self.installed_pkgs = get_installed_packages()  # Pacman
-        self.installed_aur = get_aur_packages()         # AUR
-        self.installed_flatpaks = get_flatpaks()        # Flatpak
-        self.installed_cmds = get_installed_commands()
-        self.desktop_apps = get_desktop_apps()
-        self.appimages = get_appimages()
-
-        # Load kept folders from file
-        self.load_kept_folders()
-
-        # Start scanning loop
-        self.after(100, self.scan_next_folder)
+    def _on_close_request(self, *args):
+        self._save_settings()
+        return False  # allow the window to close
 
     # =========================================================
-    # UI CREATION METHODS
+    # ACTIONS (win.*) - drives menu, context menu and keyboard shortcuts
     # =========================================================
-    def create_progress_area(self):
-        # Create top section showing scan progress using Treeview
-        frame = ttk.Frame(self)
-        frame.pack(side="top", fill="x", padx=5, pady=5)
+    def _build_actions(self):
+        def add(name, callback):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", lambda a, p: callback())
+            self.add_action(action)
 
-        self.progress_label = ttk.Label(frame, text="Scanning folders...")
-        self.progress_label.pack(anchor="w")
+        add("open-folder", self.open_folder)
+        add("load-description", self.load_description)
+        add("keep-folder", self.keep_folder)
+        add("unkeep-folder", self.unkeep_folder)
+        add("delete-folder", self.delete_folder)
+        add("export-list", self.export_orphaned_list)
+        add("focus-search", lambda: self.search_entry.grab_focus())
+        add("open-help", self.open_help)
+        add("show-about", self.show_about)
 
-        # Treeview
-        self.progress_tree = ttk.Treeview(frame, show="tree", selectmode="browse", height=8, style="Progress.Treeview")
-        self.progress_tree.pack(side="left", fill="both", expand=True)
+        app = self.get_application()
+        app.set_accels_for_action("win.delete-folder", ["Delete"])
+        app.set_accels_for_action("win.open-folder", ["Return"])
+        app.set_accels_for_action("win.focus-search", ["<Control>f"])
 
-        # Vertical scrollbar
-        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.progress_tree.yview)
-        scrollbar.pack(side="right", fill="y")
-        self.progress_tree.configure(yscrollcommand=scrollbar.set)
+    # =========================================================
+    # UI CONSTRUCTION
+    # =========================================================
+    def _build_ui(self):
+        toolbar_view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        title_widget = Adw.WindowTitle(title="OrphyCleaner", subtitle=f"v{__version__}")
+        header.set_title_widget(title_widget)
 
-    def create_warning_label(self):
-        # Add a cautionary message about deleting folders.
-        warning_frame = ttk.Frame(self)
-        warning_frame.pack(side="top", fill="x", padx=5)
-        tk.Label(warning_frame,
-                 text="⚠ Be careful deleting folders. This script is not 100% accurate.",
-                 fg="red", font=("Helvetica", 10, "italic")).pack(anchor="w")
+        menu_model = Gio.Menu()
+        menu_model.append("Help", "win.open-help")
+        menu_model.append("About OrphyCleaner", "win.show-about")
+        menu_button = Gtk.MenuButton(icon_name="open-menu-symbolic", tooltip_text="Main Menu")
+        menu_button.set_menu_model(menu_model)
+        header.pack_end(menu_button)
 
-    def create_main_layout(self):
-        #Create main three-column layout: categories, folder list, action buttons.
-        main_frame = ttk.Frame(self)
-        main_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        toolbar_view.add_top_bar(header)
 
-        # Left column: Category buttons
-        self.left_frame = ttk.Frame(main_frame, width=450)
-        self.left_frame.pack(side="left", fill="y", padx=5)
-        self.left_frame.pack_propagate(False)
+        self.toast_overlay = Adw.ToastOverlay()
 
-        # Middle column: Folder list using Treeview
-        self.middle_frame = ttk.Frame(main_frame)
-        self.middle_frame.pack(side="left", fill="both", expand=True, padx=5)
-        self.folder_tree = ttk.Treeview(self.middle_frame, show="tree", selectmode="browse", style="Folders.Treeview")
-        self.folder_tree.pack(side="left", fill="both", expand=True)
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.add_named(self._build_scan_page(), "scanning")
+        self.stack.add_named(self._build_main_page(), "main")
+        self.stack.set_visible_child_name("scanning")
 
-        # Vertical scrollbar
-        scrollbar = ttk.Scrollbar(self.middle_frame, orient="vertical", command=self.folder_tree.yview)
-        scrollbar.pack(side="right", fill="y")
-        self.folder_tree.configure(yscrollcommand=scrollbar.set)
+        self.toast_overlay.set_child(self.stack)
+        toolbar_view.set_content(self.toast_overlay)
+        self.set_content(toolbar_view)
 
-        # Right column
-        self.right_frame = ttk.Frame(main_frame)
-        self.right_frame.pack(side="right", fill="y", padx=5, pady=5)
+    def _build_scan_page(self):
+        status = Adw.StatusPage()
+        status.set_title("Scanning your home folder\u2026")
+        status.set_icon_name("folder-symbolic")
 
-        # Right column: Action buttons
-        self.create_action_buttons(main_frame)
-    
-    #Right column buttons for keeping, opening, deleting folders.
-    def create_action_buttons(self, parent):
-        self.right_frame = ttk.Frame(parent, width=250)
-        self.right_frame.pack(side="right", fill="y", padx=5)
-        self.right_frame.pack_propagate(False)
-        self.right_frame.grid_propagate(False)   # Prevent grid from resizing
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_size_request(420, -1)
 
-        # Configure column to stretch buttons full width
-        self.right_frame.columnconfigure(0, weight=1)
+        self.scan_progress_bar = Gtk.ProgressBar()
+        self.scan_status_label = Gtk.Label(label="Loading installed package data\u2026")
+        self.scan_status_label.add_css_class("dim-label")
+        self.scan_status_label.set_wrap(True)
+        self.scan_status_label.set_justify(Gtk.Justification.CENTER)
 
-        # KEEP / UNKEEP buttons share the same grid position
-        self.keep_button = tk.Button(self.right_frame, text="KEEP", bg="#4CAF50", fg="white", command=self.keep_folder)
-        self.unkeep_button = tk.Button(self.right_frame, text="UNKEEP", bg="#2196F3", fg="white", command=self.unkeep_folder)
+        box.append(self.scan_progress_bar)
+        box.append(self.scan_status_label)
+        status.set_child(box)
+        return status
 
-        self.keep_button.grid(row=0, column=0, sticky="ew", pady=2)
-        self.unkeep_button.grid(row=0, column=0, sticky="ew", pady=2)
+    def _build_main_page(self):
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
 
-        # Initially show KEEP
-        self.keep_button.lift()
+        root.append(self._build_sidebar())
+        root.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        root.append(self._build_folder_panel())
+        root.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        root.append(self._build_action_panel())
+        return root
 
-        # Load descriptions button
-        self.load_desc_button = tk.Button(self.right_frame, text="LOAD DESCRIPTION", command=self.load_description, bg="#7616DF", fg="white")
-        self.load_desc_button.grid(row=1, column=0, sticky="ew", pady=5)
+    def _build_sidebar(self):
+        outer = Gtk.ScrolledWindow()
+        outer.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        outer.set_size_request(340, -1)
 
-        # Open folder
-        self.open_button = tk.Button(self.right_frame, text="OPEN FOLDER", bg="#FF9800", fg="white", command=self.open_folder)
-        self.open_button.grid(row=2, column=0, sticky="ew", pady=5)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
 
-        # Delete folder    
-        self.delete_button = tk.Button(self.right_frame, text="DELETE", bg="#F44336", fg="white", command=self.delete_folder)
-        self.delete_button.grid(row=3, column=0, sticky="ew", pady=5)
-        # start disabled until a category is shown
-        self.delete_button.config(state="disabled", bg="#cccccc", fg="#666666")
+        cat_label = Gtk.Label(label="Categories")
+        cat_label.add_css_class("heading")
+        cat_label.set_xalign(0)
+        box.append(cat_label)
 
-        # Help button
-        self.help_button = tk.Button(self.right_frame, text="HELP", command=self.open_help)
-        self.help_button.grid(row=4, column=0, sticky="ew", pady=5)
+        self.category_list = Gtk.ListBox()
+        self.category_list.add_css_class("boxed-list")
+        self.category_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        for cat in CATEGORY_ORDER:
+            row = Adw.ActionRow(title=cat)
+            icon = Gtk.Image.new_from_icon_name(CATEGORY_ICONS[cat])
+            icon.add_css_class(CATEGORY_STYLES[cat])
+            row.add_prefix(icon)
+            count_label = Gtk.Label(label="0")
+            count_label.add_css_class("numeric")
+            count_label.add_css_class(CATEGORY_STYLES[cat])
+            row.add_suffix(count_label)
+            row.category = cat
+            self.category_list.append(row)
+            self.category_rows[cat] = row
+            self.category_count_labels[cat] = count_label
+        self.category_list.connect(
+            "row-selected",
+            lambda lb, row: self.show_category(row.category) if row is not None else None,
+        )
+        box.append(self.category_list)
 
-        # Quit button
-        tk.Button(self.right_frame, text="QUIT", command=self.destroy).grid(row=5, column=0, sticky="ew", pady=5)
-        
-        # Description displayed under the buttons
-        self.desc_label = tk.Label(self.right_frame, text="", wraplength=250, justify="left", fg="#333")
-        self.desc_label.grid(row=6, column=0, sticky="w", pady=5)
+        info_group = Adw.PreferencesGroup(title="How to use")
+        info_row = Adw.ActionRow()
+        info_label = Gtk.Label(
+            label=(
+                "1. Select a category to see folders.\n"
+                "2. Only \u2018Orphaned\u2019 folders can be deleted.\n"
+                "3. Use Keep/Unkeep to mark important folders."
+            )
+        )
+        info_label.set_wrap(True)
+        info_label.set_xalign(0)
+        info_label.set_margin_top(6)
+        info_label.set_margin_bottom(6)
+        info_row.set_child(info_label)
+        info_group.add(info_row)
+        box.append(info_group)
+
+        warning_group = Adw.PreferencesGroup()
+        warning_row = Adw.ActionRow()
+        warning_title = Gtk.Label(label="\u26a0 WARNING")
+        warning_title.add_css_class("heading")
+        warning_title.add_css_class("error")
+        warning_title.set_xalign(0)
+        warning_body = Gtk.Label(
+            label=(
+                "\u2022 Deleting folders is permanent if Trash is unavailable.\n"
+                "\u2022 Double-check and backup before deleting anything.\n"
+                "\u2022 This application is not 100% accurate."
+            )
+        )
+        warning_body.set_wrap(True)
+        warning_body.set_xalign(0)
+        warning_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        warning_box.set_margin_top(6)
+        warning_box.set_margin_bottom(6)
+        warning_box.append(warning_title)
+        warning_box.append(warning_body)
+        warning_row.set_child(warning_box)
+        warning_group.add(warning_row)
+        box.append(warning_group)
+
+        outer.set_child(box)
+        return outer
+
+    def _build_folder_panel(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_hexpand(True)
+
+        search_bar_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        search_bar_box.set_margin_top(8)
+        search_bar_box.set_margin_bottom(8)
+        search_bar_box.set_margin_start(8)
+        search_bar_box.set_margin_end(8)
+        self.search_entry = Gtk.SearchEntry(placeholder_text="Filter folders\u2026")
+        self.search_entry.set_hexpand(True)
+        self.search_entry.connect("search-changed", lambda e: self.show_category(self.current_category))
+        search_bar_box.append(self.search_entry)
+        box.append(search_bar_box)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_vexpand(True)
+        scroller.set_hexpand(True)
+
+        self.folder_list = Gtk.ListBox()
+        self.folder_list.add_css_class("boxed-list")
+        self.folder_list.set_margin_start(8)
+        self.folder_list.set_margin_end(8)
+        self.folder_list.set_margin_bottom(8)
+        self.folder_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.folder_list.connect("row-selected", self._on_folder_selected)
+        self.folder_list.connect("row-activated", lambda lb, row: self.open_folder())
+
+        gesture = Gtk.GestureClick(button=3)
+        gesture.connect("pressed", self._on_folder_right_click)
+        self.folder_list.add_controller(gesture)
+
+        scroller.set_child(self.folder_list)
+        box.append(scroller)
+        return box
+
+    def _build_action_panel(self):
+        outer = Gtk.ScrolledWindow()
+        outer.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        outer.set_size_request(230, -1)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+
+        self.keep_button = Gtk.Button(label="Keep")
+        self.keep_button.add_css_class("suggested-action")
+        self.keep_button.connect("clicked", lambda b: self.keep_folder())
+        box.append(self.keep_button)
+
+        self.load_desc_button = Gtk.Button(label="Load Description")
+        self.load_desc_button.connect("clicked", lambda b: self.load_description())
+        box.append(self.load_desc_button)
+
+        self.open_button = Gtk.Button(label="Open Folder")
+        self.open_button.connect("clicked", lambda b: self.open_folder())
+        box.append(self.open_button)
+
+        self.delete_button = Gtk.Button(label="Delete")
+        self.delete_button.add_css_class("destructive-action")
+        self.delete_button.connect("clicked", lambda b: self.delete_folder())
+        box.append(self.delete_button)
+
+        self.export_button = Gtk.Button(label="Export List")
+        self.export_button.connect("clicked", lambda b: self.export_orphaned_list())
+        box.append(self.export_button)
+
+        box.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
+        self.desc_label = Gtk.Label(label="")
+        self.desc_label.set_wrap(True)
+        self.desc_label.set_xalign(0)
+        self.desc_label.set_yalign(0)
+        self.desc_label.add_css_class("dim-label")
+        self.desc_label.add_css_class("caption")
+        box.append(self.desc_label)
+
+        outer.set_child(box)
+        return outer
+
+    # =========================================================
+    # BACKGROUND STARTUP
+    # =========================================================
+    def _load_system_data_thread(self):
+        installed_pkgs = get_installed_packages()
+        installed_aur = get_aur_packages()
+        installed_flatpaks = get_flatpaks()
+        installed_cmds = get_installed_commands()
+        desktop_apps = get_desktop_apps()
+        appimages = get_appimages()
+
+        def apply():
+            self.installed_pkgs = installed_pkgs
+            self.installed_aur = installed_aur
+            self.installed_flatpaks = installed_flatpaks
+            self.installed_cmds = installed_cmds
+            self.desktop_apps = desktop_apps
+            self.appimages = appimages
+
+            self.load_kept_folders()
+            self.scan_status_label.set_label("Scanning folders\u2026")
+            threading.Thread(target=self._scan_thread, daemon=True).start()
+            return False
+
+        GLib.idle_add(apply)
 
     # =========================================================
     # SCANNING LOGIC
     # =========================================================
-    def prepare_folders(self):
-        # Collect candidate folders to check from ~/.config, ~/.local/share, and hidden folders in ~.
-        folders = []
+    def load_kept_folders(self):
+        if os.path.exists(self.kept_file):
+            with open(self.kept_file, "r") as f:
+                for line in f:
+                    path = line.strip()
+                    if os.path.isdir(path):
+                        self.results["Kept"].append(path)
 
-        # From ~/.config
-        config_path = os.path.join(HOME, ".config")
-        if os.path.isdir(config_path):
-            folders.extend(os.path.join(config_path, f) for f in os.listdir(config_path))
-
-        # From ~/.local/share
-        local_share = os.path.join(HOME, ".local", "share")
-        if os.path.isdir(local_share):
-            folders.extend(os.path.join(local_share, f) for f in os.listdir(local_share))
-
-        # Hidden folders in home, excluding .config/.local
-        for f in os.listdir(HOME):
-            full_path = os.path.join(HOME, f)
-            if f.startswith('.') and os.path.isdir(full_path) and f not in ['.config', '.local']:
-                folders.append(full_path)
-
-        # Remove ignored folders
-        return [f for f in folders if os.path.isdir(f) and not is_ignored(f)]
-
-    def scan_next_folder(self):
-        # Process one folder at a time and classify it using Treeview.
-        if self.scanning_index >= len(self.folders_to_scan):
-            self.progress_tree.insert("", "end", text="Scanning complete.")
-            self.progress_label.config(text="Scanning complete")
-            self.create_category_buttons()
-            return
-
-        folder = self.folders_to_scan[self.scanning_index]
-        idx = len(self.progress_tree.get_children())
-        
-        # Insert folder into Treeview
-        item_id = self.progress_tree.insert("", "end", text=folder)
-        
-        # Alternate row colors
-        bg_color = "#f9f9f9" if idx % 2 == 0 else "#ffffff"
-        self.progress_tree.tag_configure(f"row{idx}", background=bg_color)
-        self.progress_tree.item(item_id, tags=(f"row{idx}",))
-
-        # Scroll to last item
-        self.progress_tree.see(item_id)
-
-        # Classification rules
+    def _classify(self, folder):
         base = os.path.basename(folder)
         name = ALIAS_MAP.get(base, normalize(base.lstrip('.')))
 
         if name in self.installed_pkgs:
-            self.results["Installed (package match)"].append(folder)
+            return "Installed (package match)"
         elif name in self.installed_cmds:
-            self.results["Installed (executable found)"].append(folder)
-        elif any(name in pkg for pkg in self.installed_pkgs):
-            self.results["Maybe Installed (partial package match)"].append(folder)
+            return "Installed (executable found)"
         elif any(name in app for app in self.installed_flatpaks):
-            self.results["Installed (Flatpak)"].append(folder)
+            return "Installed (Flatpak)"
         elif any(name in app for app in self.desktop_apps):
-            self.results["Installed (desktop file match)"].append(folder)
+            return "Installed (desktop file match)"
         elif any(name in app for app in self.appimages):
-            self.results["Installed (AppImage)"].append(folder)
-        elif folder not in self.results["Kept"]:
-            self.results["Orphaned"].append(folder)
+            return "Installed (AppImage)"
+        elif any(name in pkg for pkg in self.installed_pkgs):
+            return "Maybe Installed (partial package match)"
+        else:
+            return "Orphaned"
 
-        self.scanning_index += 1
-        self.after(1, self.scan_next_folder)
+    def _scan_thread(self):
+        total = len(self.folders_to_scan)
+        kept_set = set(self.results["Kept"])
+        for i, folder in enumerate(self.folders_to_scan):
+            if folder not in kept_set:
+                cat = self._classify(folder)
+                self.results[cat].append(folder)
+            GLib.idle_add(self._update_scan_progress, i + 1, total, folder)
+        GLib.idle_add(self._on_scan_complete)
+
+    def _update_scan_progress(self, done, total, folder):
+        frac = done / total if total else 1.0
+        self.scan_progress_bar.set_fraction(frac)
+        self.scan_status_label.set_label(f"Scanning ({done}/{total})\u2026\n{folder}")
+        return False
+
+    def _on_scan_complete(self):
+        for cat in CATEGORY_ORDER:
+            self._refresh_category_count(cat)
+        self.stack.set_visible_child_name("main")
+        self.show_category("Orphaned")
+        return False
 
     # =========================================================
     # CATEGORY HANDLING
     # =========================================================
-    def create_category_buttons(self):
-        # Create/update category buttons with counts.
-        # Remove old category buttons 
-        if hasattr(self, "categories_frame"):
-            for widget in self.categories_frame.winfo_children():
-                widget.destroy()
-        else:
-            self.categories_frame = tk.Frame(self.left_frame)
-            self.categories_frame.pack(side="top", fill="x")
-
-        # Create category buttons
-        for cat, color in CATEGORY_COLORS.items():
-            btn = tk.Button(
-                self.categories_frame,
-                text=f"{cat} ({len(self.results.get(cat, []))})",
-                bg=color,
-                fg="white",
-                relief="raised",
-                command=lambda c=cat: self.show_category(c)
-            )
-            btn.pack(fill="x", pady=2)
-
-        if not self.current_category:
-            self.show_category("Orphaned")
-
-        # Create infobox
-        if hasattr(self, "infobox_frame"):
-            for widget in self.infobox_frame.winfo_children():
-                widget.destroy()
-        else:
-            self.infobox_frame = tk.Frame(self.left_frame)
-            self.infobox_frame.pack(side="top", fill="x", pady=(10,0))
-
-        from tkinter import font
-        bold_font = font.Font(family="Helvetica", size=10, weight="bold")
-        normal_font = font.Font(family="Helvetica", size=10)
-
-        tk.Label(self.infobox_frame, text="HOW TO USE:", font=bold_font, justify="left", anchor="nw").pack(fill="x")
-        tk.Label(
-            self.infobox_frame,
-            text=(
-                "1. Select a category to see folders.\n"
-                "2. Only 'Orphaned' folders can be deleted.\n"
-                "3. Use KEEP/UNKEEP to mark important folders."
-            ),
-            font=normal_font,
-            justify="left",
-            anchor="nw"
-        ).pack(fill="x", pady=(0,5))
-        tk.Label(self.infobox_frame, text="⚠ WARNING:", font=bold_font, fg="red", justify="left", anchor="nw").pack(fill="x")
-        tk.Label(
-            self.infobox_frame,
-            text=(
-                "- Deleting folders is permanent if Trash is unavailable.\n"
-                "- Double-check and backup before deleting anything.\n"
-                "- This script is not 100% accurate."
-            ),
-            font=normal_font,
-            justify="left",
-            anchor="nw"
-        ).pack(fill="x")
-
-        # Make infobox text wrap dynamically
-        def update_wrap(event):
-            for lbl in self.infobox_frame.winfo_children():
-                lbl.config(wraplength=event.width)      
-        self.left_frame.bind("<Configure>", update_wrap)
+    def _refresh_category_count(self, cat):
+        count = len(self.results.get(cat, []))
+        label = str(count)
+        if cat == "Orphaned" and count:
+            total = sum((self.folder_items[f].size or 0) for f in self.results.get(cat, []) if f in self.folder_items)
+            if total:
+                label = f"{count} \u2014 {format_size(total)}"
+        self.category_count_labels[cat].set_label(label)
 
     def show_category(self, category):
-        # Show all folders in the selected category using Treeview.
-        self.current_category = category
-        self.folder_tree.heading("#0", text="Folders", anchor="w")
-
-        # Clear old folder list
-        for item in self.folder_tree.get_children():
-            self.folder_tree.delete(item)
-
-        # Add folders for this category with alternating row colors
-        for idx, folder in enumerate(self.results.get(category, [])):
-            item_id = self.folder_tree.insert("", "end", text=folder)
-            bg_color = "#f9f9f9" if idx % 2 == 0 else "#ffffff"
-            self.folder_tree.tag_configure(f"row{idx}", background=bg_color)
-            self.folder_tree.item(item_id, tags=(f"row{idx}",))
-
-        # Highlight the selected category button
-        for btn in self.categories_frame.winfo_children():
-            text = btn.cget("text")
-            if text.startswith(category):
-                btn.config(relief="sunken", text=f"▶ {category} ({len(self.results.get(category, []))})")
-            else:
-                btn.config(relief="raised", text=text.lstrip("▶ "))
-
-        # Show correct KEEP/UNKEEP without moving it
-        if category == "Orphaned":
-            self.keep_button.config(state="normal")
-            self.unkeep_button.config(state="disabled")
-            self.keep_button.lift()
-        elif category == "Kept":
-            self.keep_button.config(state="disabled")
-            self.unkeep_button.config(state="normal")
-            self.unkeep_button.lift()
-        else:
-            self.keep_button.config(state="disabled")
-            self.unkeep_button.config(state="disabled")
-            self.keep_button.lift()
-        
-        # Enable/disable and recolor buttons based on category
-        if category == "Orphaned":
-            self.keep_button.config(state="normal", bg="#4CAF50", fg="white")
-            self.unkeep_button.config(state="disabled", bg="#cccccc", fg="#666666")
-            self.delete_button.config(state="normal", bg="#F44336", fg="white")
-            self.keep_button.lift()
-        elif category == "Kept":
-            self.keep_button.config(state="disabled", bg="#cccccc", fg="#666666")
-            self.unkeep_button.config(state="normal", bg="#2196F3", fg="white")
-            self.delete_button.config(state="disabled", bg="#cccccc", fg="#666666")
-            self.unkeep_button.lift()
-        else:
-            self.keep_button.config(state="disabled", bg="#cccccc", fg="#666666")
-            self.unkeep_button.config(state="disabled", bg="#cccccc", fg="#666666")
-            self.delete_button.config(state="disabled", bg="#cccccc", fg="#666666")
-            self.keep_button.lift()
-
-    def maintain_selection(self, prev_index: int):
-        # After changing the Treeview contents, keep selection on the next sensible row.
-        items = self.folder_tree.get_children()
-        if not items:
+        if category is None or self._switching_category:
             return
+        self._switching_category = True
+        try:
+            self._show_category_impl(category)
+        finally:
+            self._switching_category = False
 
-        target_index = prev_index if prev_index < len(items) else len(items) - 1
-        target_item = items[target_index]
+    def _show_category_impl(self, category):
+        self.current_category = category
 
-        # Clear old selection and select the target item
-        self.folder_tree.selection_remove(self.folder_tree.selection())
-        self.folder_tree.selection_add(target_item)
-        self.folder_tree.see(target_item)
+        child = self.folder_list.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self.folder_list.remove(child)
+            child = nxt
+        self.folder_row_by_path = {}
+
+        target_row = self.category_rows.get(category)
+        if target_row is not None and self.category_list.get_selected_row() is not target_row:
+            self.category_list.select_row(target_row)
+
+        query = self.search_entry.get_text().strip().lower()
+        folders = self.results.get(category, [])
+        if query:
+            folders = [f for f in folders if query in f.lower()]
+
+        for path in folders:
+            item = self.folder_items.get(path)
+            if item is None:
+                item = FolderItem(path)
+                self.folder_items[path] = item
+            row = FolderRow(item)
+            self.folder_list.append(row)
+            self.folder_row_by_path[path] = row
+
+        if category == "Orphaned":
+            self.keep_button.set_label("Keep")
+            self.keep_button.set_sensitive(True)
+            self.delete_button.set_sensitive(True)
+        elif category == "Kept":
+            self.keep_button.set_label("Unkeep")
+            self.keep_button.set_sensitive(True)
+            self.delete_button.set_sensitive(False)
+        else:
+            self.keep_button.set_sensitive(False)
+            self.delete_button.set_sensitive(False)
+
+        missing = [f for f in folders if f not in self.sizing_in_progress and
+                   (f not in self.folder_items or self.folder_items[f].size is None)]
+        if missing:
+            self.sizing_in_progress.update(missing)
+            threading.Thread(target=self._compute_sizes_thread, args=(category, missing), daemon=True).start()
+
+    def _compute_sizes_thread(self, category, folders):
+        for folder in folders:
+            size = get_folder_size(folder)
+            self.sizing_in_progress.discard(folder)
+            GLib.idle_add(self._on_size_computed, folder, size, category)
+
+    def _on_size_computed(self, folder, size, category):
+        item = self.folder_items.get(folder)
+        if item is None:
+            item = FolderItem(folder)
+            self.folder_items[folder] = item
+        item.size = size
+        row = self.folder_row_by_path.get(folder)
+        if self.current_category == category and row is not None:
+            row.refresh()
+        self._refresh_category_count(category)
+        return False
+
+    def _on_folder_selected(self, listbox, row):
+        pass  # selection tracked via listbox.get_selected_row() when needed
+
+    def _listbox_rows(self, listbox):
+        rows = []
+        child = listbox.get_first_child()
+        while child is not None:
+            rows.append(child)
+            child = child.get_next_sibling()
+        return rows
+
+    def _selected_item(self):
+        row = self.folder_list.get_selected_row()
+        return row.item if row is not None else None
+
+    def _on_folder_right_click(self, gesture, n_press, x, y):
+        row = self.folder_list.get_row_at_y(int(y))
+        if row is None:
+            return
+        self.folder_list.select_row(row)
+
+        menu = Gio.Menu()
+        menu.append("Open Folder", "win.open-folder")
+        menu.append("Load Description", "win.load-description")
+        if self.current_category == "Orphaned":
+            menu.append("Keep", "win.keep-folder")
+        elif self.current_category == "Kept":
+            menu.append("Unkeep", "win.unkeep-folder")
+        if self.current_category == "Orphaned":
+            menu.append("Delete", "win.delete-folder")
+
+        popover = Gtk.PopoverMenu.new_from_model(menu)
+        popover.set_parent(self.folder_list)
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        popover.set_pointing_to(rect)
+        popover.popup()
 
     # =========================================================
-    # DESCRIPTION HANDLER
+    # DESCRIPTION HANDLER (subprocess logic unchanged from the
+    # Tkinter version; only the thread -> UI hand-off changed)
     # =========================================================
-    #Run a command and return stdout text or None. Suppress stderr.
     def _run_cmd(self, cmd, timeout=5):
         try:
             result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                timeout=timeout
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, timeout=timeout, env=SUBPROCESS_ENV
             )
             return result.stdout.strip()
         except subprocess.TimeoutExpired:
             return ""
         except Exception:
             return ""
-    
-    #Parse Description from pacman/yay/paru -Qi/-Si (handles locales like 'Description' or 'Popis')."""
+
     def _parse_desc_from_qi_or_si(self, text):
         if not text:
             return None
@@ -630,79 +834,58 @@ class AppGUI(tk.Tk):
             if ":" in line:
                 label, val = line.split(":", 1)
                 lab = label.strip().lower()
-                if "description" in lab or "popis" in lab:  # add more locales if needed
+                if "description" in lab or "popis" in lab:
                     return val.strip()
         return None
 
-    # Parse description from *-Ss output (pacman/yay/paru). 
-    # Looks for header lines containing '/<wanted_name>' and returns the following indented description line.
     def _parse_desc_from_ss(self, text, wanted_name):
         if not text:
             return None
-
         lines = text.splitlines()
         wanted_name = wanted_name.strip().lower()
-
         for i, line in enumerate(lines):
             line = line.strip("\n")
-            # skip noise lines
             if not line or line.startswith("==>") or "matches found" in line.lower():
                 continue
-
-            # detect header lines like 'aur/gnokii 0.6.31-15 ...'
             if re.search(r"/" + re.escape(wanted_name) + r"\b", line.lower()):
-                # next indented line should be description
                 if i + 1 < len(lines):
                     nxt = lines[i + 1]
                     if nxt.startswith("    ") or nxt.startswith("\t"):
                         return nxt.strip()
-
-        # fallback: first indented non-noise line
         for line in lines:
             if line.startswith("    ") or line.startswith("\t"):
                 val = line.strip()
                 if val and "matches found" not in val.lower():
                     return val
-
         return None
 
-    # -----------------------------
-    # PACMAN SEARCH
-    # -----------------------------
     def _search_pacman(self, name):
-        """Try pacman for installed (-Qi), repo (-Si), then search (-Ss)."""
-        # 1) Installed (fast, local)
         out = self._run_cmd(["pacman", "-Qi", name], timeout=2)
         desc = self._parse_desc_from_qi_or_si(out)
         if desc:
             return desc
-
-        # 2) Repo info (might be slower)
         out = self._run_cmd(["pacman", "-Si", name], timeout=8)
         desc = self._parse_desc_from_qi_or_si(out)
         if desc:
             return desc
-
-        # 3) Search databases
         out = self._run_cmd(["pacman", "-Ss", f"^{name}$"], timeout=8)
         desc = self._parse_desc_from_ss(out, name)
         if desc:
             return desc
-
         return None
 
-    # -----------------------------
-    # AUR SEARCH (via yay/paru) with negative caching & backoff
-    # -----------------------------
     def _search_aur(self, pkg_name):
         cache_key = f"aur:{pkg_name}"
-        # check negative cache
         if cache_key in self.pkg_descriptions:
             if self.pkg_descriptions[cache_key] == "<not found>":
                 return None
             return self.pkg_descriptions[cache_key]
 
-        # pick the first available helper
+        now = time.time()
+        last_attempt, backoff = self.aur_last_query.get(pkg_name, (0, self.aur_backoff_base))
+        if now - last_attempt < backoff:
+            return None
+
         if shutil.which("yay"):
             helper = "yay"
         elif shutil.which("paru"):
@@ -711,29 +894,24 @@ class AppGUI(tk.Tk):
             self.pkg_descriptions[cache_key] = "<not found>"
             return None
 
-        # backoff parameters
         retries = 2
         delay = 1
-
         attempt = 0
         while attempt < retries:
             attempt += 1
             try:
                 result = subprocess.run(
-                    [helper, "-Si", pkg_name],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=6
+                    [helper, "-Si", pkg_name], capture_output=True, text=True,
+                    check=False, timeout=6, env=SUBPROCESS_ENV
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     desc = self._parse_desc_from_qi_or_si(result.stdout)
                     if desc:
                         self.pkg_descriptions[cache_key] = desc
+                        self.aur_last_query.pop(pkg_name, None)
                         return desc
-                    break  # found nothing, no need to retry
+                    break
                 else:
-                    # network or other error, backoff
                     time.sleep(delay)
                     delay *= 2
             except subprocess.TimeoutExpired:
@@ -742,23 +920,14 @@ class AppGUI(tk.Tk):
             except Exception:
                 break
 
-        # negative cache
+        next_backoff = min(backoff * 2, self.aur_backoff_max)
+        self.aur_last_query[pkg_name] = (time.time(), next_backoff)
         self.pkg_descriptions[cache_key] = "<not found>"
         return None
 
-    # -----------------------------
-    # FLATPAK SEARCH
-    # -----------------------------
     def _flatpak_installed_ids(self):
-        """Return set of installed flatpak app IDs (raw)."""
-        out = self._run_cmd(["flatpak", "list", "--app", "--columns=application"])
-        if not out:
-            return set()
-        return {x.strip() for x in out.splitlines() if x.strip()}
+        return get_flatpak_ids_raw()
 
-    # -----------------------------
-    # FLATPAK SEARCH with negative caching
-    # -----------------------------
     def _search_flatpak(self, name):
         cache_key = f"flatpak:{name}"
         if cache_key in self.pkg_descriptions:
@@ -799,7 +968,6 @@ class AppGUI(tk.Tk):
                 if nm_l == target or app_last == target or (appid and appid.lower() == target):
                     self.pkg_descriptions[cache_key] = desc or nm
                     return desc or nm
-            # fallback substring match
             for line in out.splitlines():
                 cols = [c.strip() for c in line.split("\t")]
                 if len(cols) >= 2:
@@ -808,244 +976,281 @@ class AppGUI(tk.Tk):
                         self.pkg_descriptions[cache_key] = cols[2] if len(cols) > 2 else cols[0]
                         return self.pkg_descriptions[cache_key]
 
-        # negative cache
         self.pkg_descriptions[cache_key] = "<not found>"
         return None
 
-    # -----------------------------
-    # Build a small, sane set of candidates from a folder path:
-    # - basename
-    # - child after .config or .local/share
-    # - strip leading dot
-    # - alias map (raw basename)
-    # - normalize: lowercase + spaces → dashes  (underscores kept!)
-    # -----------------------------
     def _derive_name_candidates(self, folder_path):
-
         rel = os.path.relpath(folder_path, HOME) if folder_path.startswith(HOME) else folder_path
         parts = [p for p in rel.split(os.sep) if p]
-
         base = os.path.basename(folder_path)
         cand = set()
 
-        # child after .config or .local/share
         for i, p in enumerate(parts):
             if p == ".config" and i + 1 < len(parts):
-                cand.add(parts[i+1])
-            if p == ".local" and i + 2 < len(parts) and parts[i+1] == "share":
-                cand.add(parts[i+2])
+                cand.add(parts[i + 1])
+            if p == ".local" and i + 2 < len(parts) and parts[i + 1] == "share":
+                cand.add(parts[i + 2])
 
-        # always include basename
         cand.add(base)
-
-        # strip leading dot
         if base.startswith("."):
             cand.add(base.lstrip("."))
-
-        # alias mapping (raw basename key)
         if base in ALIAS_MAP:
             cand.add(ALIAS_MAP[base])
 
-        # normalize: lowercase + spaces→dashes (keep underscores!)
         norm = set()
         for c in cand:
             n = c.strip().lower().replace(" ", "-")
             if len(n) >= 2:
                 norm.add(n)
-
-        # stable order (shorter first tends to be more “package-like”)
         return sorted(norm, key=len)
 
-    # -----------------------------
-    # Load description for selected folder
-    # -----------------------------
     def load_description(self):
-        """Kick off background description lookup for the selected folder."""
         threading.Thread(target=self._load_description_thread, daemon=True).start()
 
-    def _update_label(self, text):
-        """Thread-safe label update."""
-        self.desc_label.after(0, lambda: self.desc_label.config(text=text))
+    def _update_desc_label(self, text):
+        self.desc_label.set_label(text)
+        return False
 
     def _load_description_thread(self):
-        # get selection
-        sel = self.folder_tree.selection()
-        if not sel:
-            self._update_label("Select a folder first")
+        item = self._selected_item()
+        if item is None:
+            GLib.idle_add(self._update_desc_label, "Select a folder first")
             return
+        folder_path = item.path
 
-        item = self.folder_tree.item(sel[0])
-        folder_path = item.get("text") or (item.get("values")[0] if item.get("values") else "")
-        if not folder_path:
-            self._update_label("Could not read selected folder")
-            return
+        GLib.idle_add(self._update_desc_label, "Loading description\u2026")
 
-        self._update_label("Loading description...")
-
-        # candidates (conservative)
         candidates = self._derive_name_candidates(folder_path)
-
         best_desc = None
         best_name = None
-        best_source = "any"
 
         for cand in candidates:
-            # Try each source in order: pacman → AUR → flatpak
             for source, search_func in [
                 ("pacman", self._search_pacman),
                 ("aur", self._search_aur),
-                ("flatpak", self._search_flatpak)
+                ("flatpak", self._search_flatpak),
             ]:
                 cache_key = f"{source}:{cand}"
                 cached = self.pkg_descriptions.get(cache_key)
-
                 if cached and cached != "<not found>":
-                    best_desc, best_name, best_source = cached, cand, source
-                    break  # got a positive cached result
+                    best_desc, best_name = cached, cand
+                    break
 
-                # Not cached or cached miss → search
-                self._update_label(f"Searching {source.upper()} for {cand}...")
+                GLib.idle_add(self._update_desc_label, f"Searching {source.upper()} for {cand}\u2026")
                 desc = search_func(cand)
-
                 if desc:
-                    best_desc, best_name, best_source = desc, cand, source
-                    self.pkg_descriptions[cache_key] = desc  # cache positive result
+                    best_desc, best_name = desc, cand
+                    self.pkg_descriptions[cache_key] = desc
                     break
                 else:
-                    # cache negative result for backoff purposes
                     self.pkg_descriptions[cache_key] = "<not found>"
 
             if best_desc:
-                break  # stop after first positive result
+                break
 
         if not best_desc:
             best_name = candidates[0] if candidates else "(unknown)"
             best_desc = "Description not found"
-            best_source = "any"
-            # Cache negative results for "any" key
-            cache_key = f"{best_source}:{best_name}"
-            self.pkg_descriptions[cache_key] = best_desc
+            self.pkg_descriptions[f"any:{best_name}"] = best_desc
 
-        # save cache to disk
         try:
             with open(self.cache_file, "w") as f:
                 json.dump(self.pkg_descriptions, f, indent=2)
         except Exception:
             pass
 
-        self._update_label(f"{best_name}: {best_desc}")
+        GLib.idle_add(self._update_desc_label, f"{best_name}: {best_desc}")
 
     # =========================================================
     # ACTION HANDLERS
     # =========================================================
-    def load_kept_folders(self):
-        # Load kept folders from file.
-        if os.path.exists(self.kept_file):
-            with open(self.kept_file, "r") as f:
-                for line in f:
-                    path = line.strip()
-                    if os.path.isdir(path):
-                        self.results["Kept"].append(path)
+    def _toast(self, text):
+        self.toast_overlay.add_toast(Adw.Toast(title=text, timeout=4))
 
-    # Move selected folder from and to category.
     def move_folder_between_categories(self, src_category, dst_category):
-        # Move selected folder from src_category to dst_category and keep selection.
         if self.current_category != src_category:
-            return
-
-        selected_items = self.folder_tree.selection()
-        if not selected_items:
-            return
-        item_id = selected_items[0]
-        folder = self.folder_tree.item(item_id, "text")
-
+            return None
+        item = self._selected_item()
+        if item is None:
+            return None
+        folder = item.path
         if folder not in self.results.get(src_category, []):
-            return  # Safety check
+            return None
 
-        # Move folder between categories
+        prev_index = self._listbox_rows(self.folder_list).index(self.folder_list.get_selected_row())
+
         self.results[src_category].remove(folder)
         self.results.setdefault(dst_category, []).append(folder)
-
-        # Refresh the source category list
-        prev_index = list(self.folder_tree.get_children()).index(item_id)
         self.show_category(src_category)
+        self._refresh_category_count(dst_category)
+        self._select_row_near_index(prev_index)
+        return folder
 
-        # Keep selection
-        self.maintain_selection(prev_index)
+    def _select_row_near_index(self, index):
+        rows = self._listbox_rows(self.folder_list)
+        if not rows:
+            return
+        target = rows[min(index, len(rows) - 1)]
+        self.folder_list.select_row(target)
 
     def keep_folder(self):
-        self.move_folder_between_categories("Orphaned", "Kept")
-        self.save_kept_folders()
-        self.create_category_buttons()
+        folder = self.move_folder_between_categories("Orphaned", "Kept")
+        if folder:
+            self.save_kept_folders()
+            self._toast(f"Kept {os.path.basename(folder)}")
 
     def unkeep_folder(self):
-        self.move_folder_between_categories("Kept", "Orphaned")
-        self.save_kept_folders()
-        self.create_category_buttons()
-    
-    # Write kept folders to file.
+        folder = self.move_folder_between_categories("Kept", "Orphaned")
+        if folder:
+            self.save_kept_folders()
+            self._toast(f"Unkept {os.path.basename(folder)}")
+
     def save_kept_folders(self):
         with open(self.kept_file, "w") as f:
             for fpath in self.results["Kept"]:
                 f.write(fpath + "\n")
 
     def open_folder(self):
-        # Open the selected folder in file manager.
-        selected_items = self.folder_tree.selection()
-        if not selected_items:
+        item = self._selected_item()
+        if item is None:
             return
-        folder = self.folder_tree.item(selected_items[0], "text")
-        subprocess.Popen(["xdg-open", folder])
+        if not shutil.which("xdg-open"):
+            self._toast("xdg-open was not found on this system.")
+            return
+        try:
+            subprocess.Popen(["xdg-open", item.path])
+        except Exception as e:
+            self._toast(f"Could not open folder: {e}")
 
     def open_help(self):
-        # Open the help URL in the default web browser.
-        webbrowser.open("https://github.com/dodog/orphycleaner") 
+        # Gtk.UriLauncher passes a proper activation token to the compositor
+        # (the same mechanism Adw.AboutWindow's links use), so the browser
+        # window is raised and focused instead of opening in the background.
+        launcher = Gtk.UriLauncher(uri="https://orphycleaner.mayday.sk/#help")
+        launcher.launch(self, None, self._on_uri_launched)
+
+    def _on_uri_launched(self, launcher, result):
+        try:
+            launcher.launch_finish(result)
+        except GLib.Error as e:
+            self._toast(f"Could not open link: {e.message}")
+
+    def show_about(self):
+        about = Adw.AboutWindow(
+            transient_for=self,
+            application_name="OrphyCleaner",
+            application_icon="folder-symbolic",
+            version=__version__,
+            developer_name="Jozef Gaal",
+            developers=["Jozef Gaal (dodog)"],
+            copyright="\u00a9 Jozef Gaal",
+            license_type=Gtk.License.AGPL_3_0,
+            website="https://orphycleaner.mayday.sk",
+            issue_url="https://github.com/dodog/orphycleaner/issues",
+            comments=(
+                "Scans your home directory for config folders that may belong "
+                "to uninstalled or unused applications."
+            ),
+        )
+        about.present()
 
     def delete_folder(self):
-        # Delete selected orphaned folder and keep selection on next row.
-        selected_items = self.folder_tree.selection()
-        if not selected_items:
+        item = self._selected_item()
+        if item is None:
             return
-        item_id = selected_items[0]
-        folder = self.folder_tree.item(item_id, "text")
-
         if self.current_category != "Orphaned":
-            messagebox.showwarning("Delete", "Only Orphaned folders can be deleted.")
+            self._toast("Only Orphaned folders can be deleted.")
+            return
+        folder = item.path
+
+        has_trash = bool(shutil.which("gio"))
+        heading = "Confirm Delete" if has_trash else "Confirm Permanent Delete"
+        body = (
+            f"Are you sure you want to move this folder to Trash?\n\n{folder}"
+            if has_trash else
+            f"Trash is not available.\n\nAre you sure you want to permanently delete this folder?\n\n{folder}"
+        )
+
+        dialog = Adw.MessageDialog(
+            transient_for=self, heading=heading, body=body,
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", self._on_delete_confirmed, folder, has_trash)
+        dialog.present()
+
+    def _on_delete_confirmed(self, dialog, response, folder, has_trash):
+        if response != "delete":
+            return
+        if has_trash:
+            result = subprocess.run(["gio", "trash", folder], stderr=subprocess.PIPE, text=True)
+        else:
+            result = subprocess.run(["rm", "-rf", folder], stderr=subprocess.PIPE, text=True)
+
+        if result.returncode != 0:
+            self._toast(f"Could not delete folder: {result.stderr.strip()}")
             return
 
-        # Confirm deletion
-        if shutil.which("gio"):
-            confirm = messagebox.askyesno(
-                "Confirm Delete",
-                f"Are you sure you want to move this folder to Trash?\n\n{folder}"
-            )
-            if not confirm:
-                return
-            subprocess.run(["gio", "trash", folder])
-        else:
-            confirm = messagebox.askyesno(
-                "Confirm Permanent Delete",
-                f"Trash is not available.\n\n"
-                f"Are you sure you want to permanently delete this folder?\n\n{folder}"
-            )
-            if not confirm:
-                return
-            subprocess.run(["rm", "-rf", folder])
+        selected_row = self.folder_list.get_selected_row()
+        prev_index = self._listbox_rows(self.folder_list).index(selected_row) if selected_row else 0
 
-        # Update UI and data
-        prev_index = list(self.folder_tree.get_children()).index(item_id)
-        self.folder_tree.delete(item_id)
-        if folder in self.results[self.current_category]:
-            self.results[self.current_category].remove(folder)
+        if folder in self.results.get("Orphaned", []):
+            self.results["Orphaned"].remove(folder)
+        self.folder_items.pop(folder, None)
+        self.show_category("Orphaned")
+        self._select_row_near_index(prev_index)
+        self._toast(f"Deleted {os.path.basename(folder)}")
 
-        self.create_category_buttons()
+    def export_orphaned_list(self):
+        folders = self.results.get("Orphaned", [])
+        if not folders:
+            self._toast("No orphaned folders to export.")
+            return
 
-        # Keep selection on the next appropriate row
-        self.maintain_selection(prev_index)
+        dialog = Gtk.FileDialog()
+        dialog.set_initial_name("orphycleaner_orphaned.txt")
+        dialog.save(self, None, self._on_export_path_chosen, folders)
+
+    def _on_export_path_chosen(self, dialog, result, folders):
+        try:
+            gfile = dialog.save_finish(result)
+        except GLib.Error:
+            return  # cancelled
+        if gfile is None:
+            return
+        path = gfile.get_path()
+        try:
+            with open(path, "w") as f:
+                total = 0
+                for folder in folders:
+                    item = self.folder_items.get(folder)
+                    size = item.size if item else None
+                    total += size or 0
+                    size_str = format_size(size) if size is not None else "unknown"
+                    f.write(f"{folder}\t{size_str}\n")
+                f.write(f"\nTotal reclaimable (of folders sized so far): {format_size(total)}\n")
+            self._toast(f"Orphaned folder list saved to {path}")
+        except Exception as e:
+            self._toast(f"Could not save file: {e}")
+
 
 # =========================================================
 # ENTRY POINT
 # =========================================================
+class OrphyCleanerApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        self.win = None
+
+    def do_activate(self):
+        if self.win is None:
+            self.win = OrphyCleanerWindow(self)
+        self.win.present()
+
+
 if __name__ == "__main__":
-    app = AppGUI()
-    app.mainloop()
+    app = OrphyCleanerApp()
+    app.run(sys.argv)
