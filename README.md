@@ -56,10 +56,8 @@ From Github
       ```
 
 ## Screenshots
-<img width="1500" height="868" alt="orphycleaner-v1 1 0_screnshot" src="https://github.com/user-attachments/assets/0a8a3307-87c9-44a9-835e-76a3772a34ae" />
-
-![orphycleaner](https://github.com/user-attachments/assets/fc5ab883-8252-4486-80bd-9a4e730df632)
-
+New GTK4 version:
+<img width="1580" height="835" alt="orphycleaner-screenshot" src="https://github.com/user-attachments/assets/d61e2c97-9501-4fbf-9623-846d7db6e522" />
 
 
 
