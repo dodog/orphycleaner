@@ -51,7 +51,7 @@ From Github
    Depending on your Linux distribution, install the dependencies with:
 
    [Manjaro](https://manjaro.org)/[Arch Linux](https://archlinux.org)
-     ```bash
+     ```
      sudo pacman -S python-gobject gtk4 libadwaita
       ```
 
