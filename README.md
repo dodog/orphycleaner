@@ -71,4 +71,4 @@ Update the `IGNORED_FOLDERS` list in the script to exclude additional folders.
 Add folder-to-app name aliases in the `ALIAS_MAP` section.
 
 ## ❤️ Support
-Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
+Do you find OrphyCleaner useful? You can buy me a [coffee ☕](https://ko-fi.com/dodog)
