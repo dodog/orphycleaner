@@ -5,22 +5,24 @@
 
 OrphyCleaner is a lightweight GUI tool for Arch-based Linux that scans your home directory for orphaned or unused application folders and helps you decide whether to keep or remove them. Feel free to modify it for your Linux distribution. <br /> <br />
 
-Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
+## ❓ Why I created this app
+After a long time, I ended up with a bunch of folders in my home directory from installed apps. 
+Some I had just tried out, some I had already uninstalled, and some I still use. </br>
+And there was no way to tell whether an app was still installed or not, because some folders aren’t named after the app. So I created this app, which scans the home directory and finds folders that no longer have a corresponding app. 
+
 
 ## 🚀 Features
 
-- Native GTK4 / libadwaita GUI that follows your system's light/dark theme automatically.
+
 - Scans common config locations: `~/.config`, `~/.local/share`, and other hidden folders under your home.
 - Matches folders against installed packages (`pacman`), Flatpak apps, `.desktop` applications, AppImages, and executables in your PATH.
 - Categorizes folders as Installed, Maybe Installed, or Orphaned and folder count.
 - Option to mark orphaned folders as important (Keep / Unkeep).
-- Right-click context menu and keyboard shortcuts (<kbd>Ctrl</kbd>+<kbd>F</kbd> to search, <kbd>Return</kbd> to open, <kbd>Delete</kbd> to remove).
 - Search/filter box to quickly narrow down folders within a category.
 - Package/AUR/Flatpak description lookup for any folder, so you can see what a match actually is before deciding.
-- Export the Orphaned list to a text file.
 - Includes default ignored folders like cache, trash, and other system-related directories.
 - Customizable alias mappings for special folder names.
-- Lightweight and fast — no unnecessary dependencies.
+- Lightweight and fast with native GTK4/libadwaita GUI
 - Runs on Manjaro and other Arch-based distributions.
 
 ## 🛠️ Installation
@@ -60,7 +62,6 @@ New GTK4 version:
 <img width="1580" height="835" alt="orphycleaner-screenshot" src="https://github.com/user-attachments/assets/d61e2c97-9501-4fbf-9623-846d7db6e522" />
 
 
-
 ## Help
 For help visit wiki [OrphyCleaner – Help & Documentation](https://github.com/dodog/orphycleaner/wiki)
 
@@ -69,4 +70,5 @@ Update the `IGNORED_FOLDERS` list in the script to exclude additional folders.
 
 Add folder-to-app name aliases in the `ALIAS_MAP` section.
 
-
+## ❤️ Support
+Do you find OrphyCleaner useful? Buy me a [coffee ☕](https://ko-fi.com/dodog)
