@@ -3,16 +3,16 @@
 ## Overview
 <img width="64" height="64" alt="64x64" src="https://github.com/user-attachments/assets/ab88f709-2ab5-446d-8219-2f50f1920540" align="left" style="margin-right:15px"/>
 
-OrphyCleaner is a lightweight GUI tool for Arch-based Linux that scans your home directory for orphaned or unused application folders and helps you decide whether to keep or remove them. 
+OrphyCleaner is a lightweight GUI tool for Arch-based Linux that scans your home directory for **orphaned or unused application** folders and helps you decide whether to keep or remove them. 
+
 
 ## ❓ Why I created this app
-After a long time, I ended up with a bunch of folders in my home directory from installed apps. 
+After a long time, I ended up with a **bunch of folders** in my home directory from installed apps. 
 Some I had just tried out, some I had already uninstalled, and some I still use. </br>
-And there was no way to tell whether an app was still installed or not, because some folders aren’t named after the app. So I created this app, which scans the home directory and finds folders that no longer have a corresponding app. 
+And there was no way to tell whether an app was still installed or not, because some folders aren’t named after the app. So I created this app, which scans the home directory and **finds folders** that **no longer have a corresponding app**. 
 
 
 ## 🚀 Features
-
 
 - Scans common config locations: `~/.config`, `~/.local/share`, and other hidden folders under your home.
 - Matches folders against installed packages (`pacman`), Flatpak apps, `.desktop` applications, AppImages, and executables in your PATH.
