@@ -712,6 +712,9 @@ class OrphyCleanerWindow(Adw.ApplicationWindow):
     def _show_category_impl(self, category):
         self.current_category = category
 
+        selected_row = self.folder_list.get_selected_row()
+        selected_path = selected_row.item.path if selected_row is not None else None
+
         child = self.folder_list.get_first_child()
         while child is not None:
             nxt = child.get_next_sibling()
@@ -744,6 +747,9 @@ class OrphyCleanerWindow(Adw.ApplicationWindow):
             row = FolderRow(item)
             self.folder_list.append(row)
             self.folder_row_by_path[path] = row
+
+        if selected_path is not None and selected_path in self.folder_row_by_path:
+            self.folder_list.select_row(self.folder_row_by_path[selected_path])
 
         if category == "Orphaned":
             self.keep_button.set_label("Keep")
