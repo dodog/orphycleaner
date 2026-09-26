@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 ##
 #     Project: OrphyCleaner GUI - Orphaned Config Folder Cleaner
 # Description: Scans your home directory for orphaned config folders
@@ -576,7 +576,7 @@ class OrphyCleanerWindow(Adw.ApplicationWindow):
 
         self.keep_button = Gtk.Button(label="Keep")
         self.keep_button.add_css_class("suggested-action")
-        self.keep_button.connect("clicked", lambda b: self.keep_folder())
+        self.keep_button.connect("clicked", lambda b: self._on_keep_button_clicked())
         box.append(self.keep_button)
 
         self.load_desc_button = Gtk.Button(label="Load Description")
@@ -1093,6 +1093,12 @@ class OrphyCleanerWindow(Adw.ApplicationWindow):
         target = rows[min(index, len(rows) - 1)]
         self.folder_list.select_row(target)
 
+    def _on_keep_button_clicked(self):
+        if self.current_category == "Kept":
+            self.unkeep_folder()
+        else:
+            self.keep_folder()
+
     def keep_folder(self):
         folder = self.move_folder_between_categories("Orphaned", "Kept")
         if folder:
@@ -1123,9 +1129,6 @@ class OrphyCleanerWindow(Adw.ApplicationWindow):
             self._toast(f"Could not open folder: {e}")
 
     def open_help(self):
-        # Gtk.UriLauncher passes a proper activation token to the compositor
-        # (the same mechanism Adw.AboutWindow's links use), so the browser
-        # window is raised and focused instead of opening in the background.
         launcher = Gtk.UriLauncher(uri="https://orphycleaner.mayday.sk/#help")
         launcher.launch(self, None, self._on_uri_launched)
 
