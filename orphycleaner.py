@@ -728,6 +728,14 @@ class OrphyCleanerWindow(Adw.ApplicationWindow):
         if query:
             folders = [f for f in folders if query in f.lower()]
 
+        if category in ("Orphaned", "Kept"):
+            def _size_sort_key(f):
+                item = self.folder_items.get(f)
+                if item is None or item.size is None:
+                    return (1, 0)
+                return (0, -item.size)
+            folders = sorted(folders, key=_size_sort_key)
+
         for path in folders:
             item = self.folder_items.get(path)
             if item is None:
@@ -760,6 +768,12 @@ class OrphyCleanerWindow(Adw.ApplicationWindow):
             size = get_folder_size(folder)
             self.sizing_in_progress.discard(folder)
             GLib.idle_add(self._on_size_computed, folder, size, category)
+        GLib.idle_add(self._on_category_sizes_done, category)
+
+    def _on_category_sizes_done(self, category):
+        if self.current_category == category:
+            self.show_category(category)
+        return False
 
     def _on_size_computed(self, folder, size, category):
         item = self.folder_items.get(folder)
@@ -1082,6 +1096,7 @@ class OrphyCleanerWindow(Adw.ApplicationWindow):
         self.results[src_category].remove(folder)
         self.results.setdefault(dst_category, []).append(folder)
         self.show_category(src_category)
+        self._refresh_category_count(src_category)
         self._refresh_category_count(dst_category)
         self._select_row_near_index(prev_index)
         return folder
@@ -1204,6 +1219,7 @@ class OrphyCleanerWindow(Adw.ApplicationWindow):
             self.results["Orphaned"].remove(folder)
         self.folder_items.pop(folder, None)
         self.show_category("Orphaned")
+        self._refresh_category_count("Orphaned")
         self._select_row_near_index(prev_index)
         self._toast(f"Deleted {os.path.basename(folder)}")
 
